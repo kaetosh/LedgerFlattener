@@ -42,39 +42,39 @@ class Card_UPPFileProcessor(FileProcessor):
         
         return pd.DataFrame(np.where(mask, arr, np.nan), columns=df.columns)
     
-    @staticmethod
-    def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
-        first_col = df.iloc[:, 0].astype(str).str.lower()
-        date_row_idx = first_col.str.contains('дата').idxmax() if first_col.str.contains('дата').any() else None
+    # @staticmethod
+    # def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
+    #     first_col = df.iloc[:, 0].astype(str).str.lower()
+    #     date_row_idx = first_col.str.contains('дата').idxmax() if first_col.str.contains('дата').any() else None
         
-        if date_row_idx is None:
-            raise RegisterProcessingError(Fore.RED + 'Файл не является карточкой счета 1с.\n')
+    #     if date_row_idx is None:
+    #         raise RegisterProcessingError(Fore.RED + 'Файл не является карточкой счета 1с.\n')
         
-        df.columns = df.iloc[date_row_idx].str.strip()
-        df = df.iloc[date_row_idx + 1:].copy()
+    #     df.columns = df.iloc[date_row_idx].str.strip()
+    #     df = df.iloc[date_row_idx + 1:].copy()
         
-        df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
+    #     df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
         
-        mask = df['Документ'].notna()
-        df.loc[mask, 'Документ'] = (
-            df.loc[mask, 'Документ'] + '_end' + 
-            df.loc[mask].groupby('Документ').cumcount().add(1).astype(str)
-        )
+    #     mask = df['Документ'].notna()
+    #     df.loc[mask, 'Документ'] = (
+    #         df.loc[mask, 'Документ'] + '_end' + 
+    #         df.loc[mask].groupby('Документ').cumcount().add(1).astype(str)
+    #     )
         
-        df['Дата'] = df['Дата'].ffill()
-        df['Документ'] = df['Документ'].infer_objects()
-        df['Документ'] = df['Документ'].ffill()
+    #     df['Дата'] = df['Дата'].ffill()
+    #     df['Документ'] = df['Документ'].infer_objects()
+    #     df['Документ'] = df['Документ'].ffill()
         
 
         
         
-        df.columns = [
-            f'NoNameCol {i+1}' if pd.isna(col) or col == '' else col 
-            for i, col in enumerate(df.columns)
-        ]
+    #     df.columns = [
+    #         f'NoNameCol {i+1}' if pd.isna(col) or col == '' else col 
+    #         for i, col in enumerate(df.columns)
+    #     ]
 
-        df = df[df['Дата'].notna()].copy()
-        return df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+    #     df = df[df['Дата'].notna()].copy()
+    #     return df.dropna(how='all', axis=0).dropna(how='all', axis=1)
     
     def _extract_special_data(
         self, 

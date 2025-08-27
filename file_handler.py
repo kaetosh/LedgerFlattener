@@ -8,6 +8,8 @@ Created on Mon Aug 25 10:44:30 2025
 import sys, os, subprocess, tempfile
 import pandas as pd
 
+pd.set_option('display.max_columns', None)  # Установите None, чтобы отображать все столбцы
+pd.set_option('display.expand_frame_repr', False)  # Чтобы не разбивать длинные DataFrame на несколько строк
 
 from pathlib import Path
 from tqdm import tqdm
@@ -21,6 +23,9 @@ from register_processors.card_processor import (Card_UPPFileProcessor,
 
 from register_processors.posting_processor import (Posting_UPPFileProcessor,
                                                    Posting_NonUPPFileProcessor)
+
+from register_processors.analisys_processor import (Analisys_UPPFileProcessor,
+                                                   Analisys_NonUPPFileProcessor)
 
 from support_functions import (fix_1c_excel_case,
                                sort_columns,
@@ -64,23 +69,36 @@ class FileProcessorFactory:
                 'pattern': {'период', 'аналитика дт', 'аналитика кт'},
                 'processor': Posting_NonUPPFileProcessor
             }
-        ]
+        ],
+        'analisys': [
+            {
+                'pattern': {'счет', 'кор.счет', 'с кред. счетов', 'в дебет счетов'},
+                'processor': Analisys_UPPFileProcessor
+                },
+            {
+                'pattern': {'счет', 'кор. счет', 'дебет', 'кредит'},
+                'processor': Analisys_NonUPPFileProcessor
+                }
+            ]
     }
 
     @staticmethod
-    def get_processor(file_path: Path, type_registr: Literal['posting', 'card']) -> FileProcessor:
+    def get_processor(file_path: Path, type_registr: Literal['posting', 'card', 'analisys']) -> FileProcessor:
         fixed_data = fix_1c_excel_case(file_path)
-        df = pd.read_excel(fixed_data, header=None, nrows=50)
+        df = pd.read_excel(fixed_data, header=None, nrows=20)
+        
+        
         
         # Преобразуем все данные в нижний регистр
         str_df = df.map(lambda x: str(x).strip().lower() if pd.notna(x) else '')
+        
         
         for pattern_config in FileProcessorFactory.REGISTER_PATTERNS[type_registr]:
             for _, row in str_df.iterrows():
                 row_set = set(row)
                 if pattern_config['pattern'].issubset(row_set):
                     return pattern_config['processor']()
-        
+    
         raise RegisterProcessingError(f"Файл {file_path.name} не является корректным регистром {type_registr} из 1С.\n")
 
 class FileHandler:
@@ -90,8 +108,9 @@ class FileHandler:
         self.verbose = verbose
         self.not_correct_files = []
         self.storage_processed_registers = {}
+        self.check = {}
     
-    def handle_input(self, input_path: Path, type_registr: Literal['posting', 'card']) -> None:
+    def handle_input(self, input_path: Path, type_registr: Literal['posting', 'card', 'analisys']) -> None:
         self.type_registr = type_registr
         if input_path.is_file():
             print('Принят файл...', end='\r')
@@ -110,8 +129,9 @@ class FileHandler:
             processor = self.processor_factory.get_processor(file_path, self.type_registr)
             if self.verbose:
                 print('Файл в обработке...', end='\r')
-            result = processor.process_file(file_path)
+            result, check = processor.process_file(file_path)
             self.storage_processed_registers[file_path.name] = result
+            self.check[file_path.name] = check
         except RegisterProcessingError:
             self.not_correct_files.append(file_path.name)
     
@@ -122,17 +142,25 @@ class FileHandler:
         try:
             excel_files = self._get_excel_files(dir_path)
             
-            upp_results = []
-            non_upp_results = []
+            upp_results = [] # для карточки и отчета проводкам
+            non_upp_results = [] # для карточки и отчета проводкам
+            analisys_result = [] # для анализов (и для УПП и неУПП)
 
             for file_path in tqdm(excel_files, leave=False, desc="Обработка файлов"):
                 try:
                     
                     processor = self.processor_factory.get_processor(file_path, self.type_registr)
-                    result = processor.process_file(file_path)
+                    result, check = processor.process_file(file_path)
 
-                    if isinstance(processor, (Card_UPPFileProcessor, Posting_UPPFileProcessor)):
+                    if isinstance(processor, (Card_UPPFileProcessor,
+                                              Posting_UPPFileProcessor,
+                                              # Analisys_UPPFileProcessor,
+                                              # Analisys_NonUPPFileProcessor
+                                              )):
                         upp_results.append(result)
+                    elif isinstance(processor, (Analisys_UPPFileProcessor,
+                                                Analisys_NonUPPFileProcessor)):
+                        analisys_result.append(result)
                     else:
                         non_upp_results.append(result)
                 except Exception:
@@ -150,7 +178,17 @@ class FileHandler:
                 DESIRED_ORDER[self.type_registr]['not_upp']
             ) if non_upp_results else pd.DataFrame()
             
-            if not upp_results and not non_upp_results:
+            
+            
+            
+            #continue#continue#continue#continue#continue#continue#continue
+        
+            df_pivot_analisys = sort_columns(
+                pd.concat(analisys_result), 
+                DESIRED_ORDER[self.type_registr]['upp']
+            ) if analisys_result else pd.DataFrame()
+            
+            if not upp_results and not non_upp_results and not analisys_result:
                 raise NoRegisterFilesFoundError(Fore.RED + 'В папке не найдены регистры 1С.')
             
             self._save_combined_results(df_pivot_upp, df_pivot_non_upp)
@@ -165,7 +203,7 @@ class FileHandler:
         return files
 
     def _save_and_open_batch_result(self) -> None:
-        if not self.storage_processed_registers:
+        if not self.storage_processed_registers and not (hasattr(self, 'check') and self.check):
             return
             
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
@@ -173,20 +211,34 @@ class FileHandler:
         
         if self.verbose:
             print('Сохраняем файл...   ', end='\r')
+        
         with pd.ExcelWriter(temp_filename, engine='openpyxl') as writer:
-            for sheet_name, df in self.storage_processed_registers.items():
-                safe_name = sheet_name[:31]
-                df.to_excel(writer, sheet_name=safe_name, index=False)
+            # Сохраняем данные из storage_processed_registers
+            if self.storage_processed_registers:
+                for sheet_name, df in self.storage_processed_registers.items():
+                    safe_name = sheet_name[:31]
+                    df.to_excel(writer, sheet_name=safe_name, index=False)
+            
+            # Сохраняем данные из self.check
+            if hasattr(self, 'check') and self.check:
+                for sheet_name, df in self.check.items():
+                    # Добавляем префикс "Проверка_" для листов из check
+                    safe_name = f"Проверка_{sheet_name}"[:31]
+                    df.to_excel(writer, sheet_name=safe_name, index=False)
+        
         if self.verbose:
             print('Открываем файл...   ', end='\r')
+        
         if sys.platform == "win32":
             os.startfile(temp_filename)
         elif sys.platform == "darwin":
             subprocess.run(["open", temp_filename])
         else:
             subprocess.run(["xdg-open", temp_filename])
+        
         if self.verbose:
             print('Обработка завершена.   ')
+
 
     @staticmethod
     def _save_combined_results(df_upp: pd.DataFrame, df_non_upp: pd.DataFrame) -> None:

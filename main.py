@@ -50,6 +50,7 @@ def main():
             choices=[
                 {"name": "1. Отчет по проводкам", "value": "posting"},
                 {"name": "2. Карточка счета", "value": "card"},
+                {"name": "3. Анализ счета", "value": "analisys"},
                 {"name": "   Выход", "value": "exit"}
             ],
             style=custom_style,  # Применяем кастомный стиль
@@ -71,8 +72,8 @@ def main():
                 try:
                     file_handler.handle_input(input_path, choice)
                 except Exception as e:
-                    # import traceback
-                    # traceback.print_exc()
+                    import traceback
+                    traceback.print_exc()
                     print(f"{e}  ")
                     if input_path.is_file():
                         file_handler.not_correct_files.append(input_path.name)
@@ -84,8 +85,8 @@ def main():
             # break
             continue
         except Exception as e:
-            # import traceback
-            # traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             print(f"{e}")
         finally:
             # Вывод информации о неправильных файлах
@@ -98,6 +99,9 @@ def main():
             # Очистка хранилища
             if file_handler.storage_processed_registers:
                 file_handler.storage_processed_registers.clear()
+            
+            if file_handler.check:
+                file_handler.check.clear()
         
         # Предложение продолжить
         continue_choice = questionary.select(

@@ -41,50 +41,50 @@ class Posting_UPPFileProcessor(FileProcessor):
         return result
         
     
-    @staticmethod
-    def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
-        """Оптимизированная обработка DataFrame для УПП формата"""
-        # Поиск строки с "Дата"
-        first_col = df.iloc[:, 0].astype(str).str.lower()
-        mask = first_col.str.contains('дата')
+    # @staticmethod
+    # def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
+    #     """Оптимизированная обработка DataFrame для УПП формата"""
+    #     # Поиск строки с "Дата"
+    #     first_col = df.iloc[:, 0].astype(str).str.lower()
+    #     mask = first_col.str.contains('дата')
         
-        if not mask.any():
-            raise RegisterProcessingError(Fore.RED + 'Файл не является Отчетом по проводкам 1с.\n')
+    #     if not mask.any():
+    #         raise RegisterProcessingError(Fore.RED + 'Файл не является Отчетом по проводкам 1с.\n')
         
-        date_row_idx = mask.idxmax()
+    #     date_row_idx = mask.idxmax()
         
-        # Установка заголовков и очистка
-        df.columns = df.iloc[date_row_idx].str.strip()
-        df = df.iloc[date_row_idx + 1:].copy()
+    #     # Установка заголовков и очистка
+    #     df.columns = df.iloc[date_row_idx].str.strip()
+    #     df = df.iloc[date_row_idx + 1:].copy()
         
-        # Преобразование даты
-        df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
+    #     # Преобразование даты
+    #     df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
         
         
         
-        # Добавляем порядковый номер к повторяющимся значениям документов
-        mask = df['Документ'].notna()
-        df.loc[mask, 'Документ'] = (
-            df.loc[mask, 'Документ'] 
-            + '_end' 
-            + df.loc[mask].groupby('Документ').cumcount().add(1).astype(str)
-        )
+    #     # Добавляем порядковый номер к повторяющимся значениям документов
+    #     mask = df['Документ'].notna()
+    #     df.loc[mask, 'Документ'] = (
+    #         df.loc[mask, 'Документ'] 
+    #         + '_end' 
+    #         + df.loc[mask].groupby('Документ').cumcount().add(1).astype(str)
+    #     )
         
-        # Заполнение пропусков
-        df['Дата'] = df['Дата'].ffill()
-        df['Документ'] = df['Документ'].ffill()
+    #     # Заполнение пропусков
+    #     df['Дата'] = df['Дата'].ffill()
+    #     df['Документ'] = df['Документ'].ffill()
         
-        # Переименовываем пустые или NaN заголовки
-        df.columns = [
-            f'NoNameCol {i+1}' if pd.isna(col) or col == '' else col
-            for i, col in enumerate(df.columns)
-        ]
+    #     # Переименовываем пустые или NaN заголовки
+    #     df.columns = [
+    #         f'NoNameCol {i+1}' if pd.isna(col) or col == '' else col
+    #         for i, col in enumerate(df.columns)
+    #     ]
         
-        # Удаление пустых строк и столбцов
-        df = df[df['Дата'].notna()].copy()
-        df = df.dropna(how='all').dropna(how='all', axis=1)
+    #     # Удаление пустых строк и столбцов
+    #     df = df[df['Дата'].notna()].copy()
+    #     df = df.dropna(how='all').dropna(how='all', axis=1)
         
-        return df
+    #     return df
 
     @staticmethod
     def _process_quantity_section(df: pd.DataFrame) -> pd.DataFrame:
