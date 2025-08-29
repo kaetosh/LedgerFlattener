@@ -51,6 +51,7 @@ def main():
                 {"name": "1. Отчет по проводкам", "value": "posting"},
                 {"name": "2. Карточка счета", "value": "card"},
                 {"name": "3. Анализ счета", "value": "analisys"},
+                {"name": "4. Обороты счета", "value": "turnover"},
                 {"name": "   Выход", "value": "exit"}
             ],
             style=custom_style,  # Применяем кастомный стиль
@@ -70,6 +71,7 @@ def main():
             input_paths = ui.get_input()
             for input_path in input_paths:
                 try:
+                    
                     file_handler.handle_input(input_path, choice)
                 except Exception as e:
                     import traceback

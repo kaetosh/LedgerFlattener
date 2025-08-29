@@ -11,26 +11,13 @@ import pandas as pd
 from pathlib import Path
 from colorama import init, Fore
 
-from register_processors.class_processor import FileProcessor
+from register_processors.class_processor import FileProcessor, exclude_values
 from custom_errors import RegisterProcessingError
 from support_functions import fix_1c_excel_case
 
 init(autoreset=True)
 
-'''
-Строки с данными значениями будут удалены из регистров,
-чтобы исключить дублирующие или промежуточные обороты
-'''
-exclude_values = ['Нач.сальдо',
-                  'Оборот',
-                  'Итого оборот',
-                  'Кон.сальдо',
-                  'Начальное сальдо',
-                  'Конечное сальдо',
-                  'Кор. Субконто1',
-                  'Кол-во:',
-                  'Итого',
-                  'Количество']
+
 
 '''
 Счета, субсчета по которым не включаем в итоговые файлы, оставляем только счета
@@ -107,6 +94,20 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         # Столбец с именем файла
         df['Исх.файл'] = self.file
+        
+        # Если выгрузка с валютными данными, переименуем столбцы с валютой
+        cols = df.columns.tolist()
+        duplicates = ['С кред. счетов', 'В дебет счетов']
+        
+        for dup_name in duplicates:
+            # Найти все индексы столбцов с этим именем
+            indices = [i for i, col in enumerate(cols) if col == dup_name]
+            # Переименовать второй и последующие
+            for count, idx in enumerate(indices[1:], start=2):
+                cols[idx] = f"{dup_name}_ВАЛ"
+        df.columns = cols
+
+
         
         # Сохраним столбец "Вид связи КА" в отдельный фрейм
         if 'Вид связи КА за период' in df.columns and 'Счет' in df.columns:
@@ -248,11 +249,9 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         # Обработка колонок с количеством
         values_with_quantity = False
-        if (df['Кор.счет'].isin(['Кол-во:']).any() or 'Показа-\nтели' in df.columns):
+        if df['Кор.счет'].isin(['Кол-во:']).any():
             df['С кред. счетов_КОЛ'] = df['С кред. счетов'].shift(-1)
             df['В дебет счетов_КОЛ'] = df['В дебет счетов'].shift(-1)
-            if 'Показа-\nтели' in df.columns:
-                df = df[df['Показа-\nтели'] != 'Кол.'].copy()
             values_with_quantity = True
         
         # Заполнение пропущенных значений в столбце Вид_связи
@@ -271,19 +270,19 @@ class Analisys_UPPFileProcessor(FileProcessor):
         shiftable_level = 'Level_0'
         list_level_col = [i for i in df.columns.to_list() if i.startswith('Level')]
         for i in list_level_col[::-1]:
-            if all(df[i].apply(self._is_accounting_code)):
+            if all(self._is_accounting_code_vectorized(df[i])):
+            # if all(df[i].apply(self._is_accounting_code)):
                 shiftable_level = i
                 break
         
         # Создание столбца Субсчет
-        df['Субсчет'] = df.apply(
-            lambda row: row[shiftable_level] if str(row[shiftable_level]) != '7' else f"0{row[shiftable_level]}", 
-            axis=1
-        )
-        df['Субсчет'] = df.apply(
-            lambda row: 'Без_субсчетов' if not self._is_accounting_code(row['Субсчет']) else row['Субсчет'], 
-            axis=1
-        )
+        df['Субсчет'] = np.where(
+                                df[shiftable_level].astype(str) != '7',
+                                df[shiftable_level].astype(str),
+                                '0' + df[shiftable_level].astype(str)
+                            )
+        mask = self._is_accounting_code_vectorized(df['Субсчет'])
+        df['Субсчет'] = np.where(mask, df['Субсчет'], 'Без_субсчетов')
         
         # Переименование столбцов
         df = df.rename(columns={
@@ -293,12 +292,12 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         # Указание порядка столбцов
         desired_order = ['Исх.файл', 'Субсчет', 'Аналитика', 'Вид связи КА за период', 
-                         'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'В дебет счетов']
+                         'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'С кред. счетов_ВАЛ', 'В дебет счетов', 'В дебет счетов_ВАЛ']
         
         if values_with_quantity:
             desired_order = ['Исх.файл', 'Субсчет', 'Аналитика', 'Вид связи КА за период', 
-                            'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'С кред. счетов_КОЛ', 
-                            'В дебет счетов', 'В дебет счетов_КОЛ']
+                            'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'С кред. счетов_КОЛ', 'С кред. счетов_ВАЛ',
+                            'В дебет счетов', 'В дебет счетов_КОЛ', 'В дебет счетов_ВАЛ']
         
         # Добавление level колонок
         level_columns = [col for col in df.columns if 'Level_' in col]
@@ -306,9 +305,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
         df = df[new_order]
         
         # Финальная обработка
-        df['Субконто_корр_счета'] = df['Субконто_корр_счета'].apply(
-            lambda x: 'Не расшифровано' if self._is_accounting_code(x) else x
-        )
+        mask = self._is_accounting_code_vectorized(df['Субконто_корр_счета'])
+        df['Субконто_корр_счета'] = np.where(mask, 'Не расшифровано', df['Субконто_корр_счета'])
         
         # Удаление пустых строк
         df = df.dropna(subset=['С кред. счетов', 'В дебет счетов'], how='all')
@@ -455,6 +453,7 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         # Столбец с именем файла
         df['Исх.файл'] = self.file
         
+        
         # Сохраним столбец "Вид связи КА" в отдельный фрейм
         if 'Вид связи КА за период' in df.columns and 'Счет' in df.columns:
             df_type_connection = (
@@ -469,6 +468,7 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         kor_schet = df['Кор. Счет'].astype(str)
         is_valid_account = self._is_accounting_code_vectorized(kor_schet)
         
+
         # Оптимизированное условие для mask
         mask = df['Счет'].isna()
         mask = mask & ~is_valid_account
@@ -477,12 +477,19 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
     
         # Заполнение пропусков
         df['Счет'] = np.where(mask, 'Не_заполнено', df['Счет'])
+        
+        # df.to_excel('100.xlsx')
+        # mask.to_excel('101.xlsx')
+        
         df['Счет'] = df['Счет'].ffill().astype(str)
+
     
         # Добавляем '0' для счетов до 10
         account_is_valid = self._is_accounting_code_vectorized(df['Счет'])
         mask_pad = (df['Счет'].str.len() == 1) & account_is_valid
         df.loc[mask_pad, 'Счет'] = '0' + df.loc[mask_pad, 'Счет']
+        
+        
         
 
         '''Разносим вертикальные данные в горизонтальные'''
@@ -501,9 +508,15 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
             # Обнуляем значения там, где уровень выше текущего
             higher_level_mask = df['Уровень'] < level
             df.loc[higher_level_mask, f'Level_{level}'] = None
+        
+        
     
         # Создаем столбец Корр_счет
         df['Корр_счет'] = np.where(is_valid_account, kor_schet, None)
+        
+
+        
+        
         
         # Добавляем '0' для корр. счетов - исправляем проблему типов
         korr_schet_str = df['Корр_счет'].astype(str)
@@ -516,6 +529,9 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         
         # Заполняем пропущенные значения корр.счетом сверху вниз
         df['Корр_счет'] = df['Корр_счет'].ffill()
+        
+        
+        
         
         
         
@@ -566,6 +582,8 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         df_delete = df_delete[df_delete['Курсив'] == 0][['Кор. Счет', 'Корр_счет']]
         unique_df = df_delete.drop_duplicates(subset=['Кор. Счет', 'Корр_счет']).dropna(subset=['Корр_счет'])
         
+
+        
         # Подсчет уникальных значений
         all_acc_dict = unique_df['Корр_счет'].value_counts().to_dict()
         
@@ -597,14 +615,19 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         # Преобразование типов и фильтрация
         df['Кор. Счет'] = df['Кор. Счет'].astype(str)
         
-        # Обработка колонок с количеством
-        values_with_quantity = False
-        if (df['Кор. Счет'].isin(['Кол-во:']).any() or 'Показа-\nтели' in df.columns):
-            df['С кред. счетов_КОЛ'] = df['Дебет'].shift(-1)
-            df['В дебет счетов_КОЛ'] = df['Кредит'].shift(-1)
-            if 'Показа-\nтели' in df.columns:
-                df = df[df['Показа-\nтели'] != 'Кол.'].copy()
-            values_with_quantity = True
+        # Обработка колонок с количеством и валютой
+        values_with_quantity, values_with_currency = False, False
+        if 'Показа-\nтели' in df.columns:
+            if df['Показа-\nтели'].isin(['Кол.']).any():
+                df['С кред. счетов_КОЛ'] = df['Дебет'].shift(-1)
+                df['В дебет счетов_КОЛ'] = df['Кредит'].shift(-1)
+                df = df[~df['Показа-\nтели'].isin(['Кол.', 'Вал.'])].copy()
+                values_with_quantity = True
+            elif df['Показа-\nтели'].isin(['Вал.']).any():
+                df['С кред. счетов_ВАЛ'] = df['Дебет'].shift(-1)
+                df['В дебет счетов_ВАЛ'] = df['Кредит'].shift(-1)
+                df = df[~df['Показа-\nтели'].isin(['Кол.', 'Вал.'])].copy()
+                values_with_currency = True
         
         # Заполнение пропущенных значений в столбце Вид_связи
         if 'Вид связи КА за период' in df.columns:
@@ -622,19 +645,21 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         shiftable_level = 'Level_0'
         list_level_col = [i for i in df.columns.to_list() if i.startswith('Level')]
         for i in list_level_col[::-1]:
-            if all(df[i].apply(self._is_accounting_code)):
+            if all(self._is_accounting_code_vectorized(df[i])):
                 shiftable_level = i
                 break
         
         # Создание столбца Субсчет
-        df['Субсчет'] = df.apply(
-            lambda row: row[shiftable_level] if str(row[shiftable_level]) != '7' else f"0{row[shiftable_level]}", 
-            axis=1
-        )
-        df['Субсчет'] = df.apply(
-            lambda row: 'Без_субсчетов' if not self._is_accounting_code(row['Субсчет']) else row['Субсчет'], 
-            axis=1
-        )
+        df['Субсчет'] = np.where(
+                                df[shiftable_level].astype(str) != '7',
+                                df[shiftable_level].astype(str),
+                                '0' + df[shiftable_level].astype(str)
+                            )
+        mask = self._is_accounting_code_vectorized(df['Субсчет'])
+        df['Субсчет'] = np.where(mask, df['Субсчет'], 'Без_субсчетов')
+        
+        
+
         
         # Переименование столбцов
         df = df.rename(columns={
@@ -652,6 +677,10 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
             desired_order = ['Исх.файл', 'Субсчет', 'Аналитика', 'Вид связи КА за период', 
                             'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'С кред. счетов_КОЛ', 
                             'В дебет счетов', 'В дебет счетов_КОЛ']
+        if values_with_currency:
+            desired_order = ['Исх.файл', 'Субсчет', 'Аналитика', 'Вид связи КА за период', 
+                            'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'С кред. счетов_ВАЛ', 
+                            'В дебет счетов', 'В дебет счетов_ВАЛ']
         
         # Добавление level колонок
         level_columns = [col for col in df.columns if 'Level_' in col]
@@ -659,9 +688,8 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         df = df[new_order]
         
         # Финальная обработка
-        df['Субконто_корр_счета'] = df['Субконто_корр_счета'].apply(
-            lambda x: 'Не расшифровано' if self._is_accounting_code(x) else x
-        )
+        mask = self._is_accounting_code_vectorized(df['Субконто_корр_счета'])
+        df['Субконто_корр_счета'] = np.where(mask, 'Не расшифровано', df['Субконто_корр_счета'])
         
         # Удаление пустых строк
         df = df.dropna(subset=['С кред. счетов', 'В дебет счетов'], how='all')
@@ -703,7 +731,6 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         # Заполняем пропуски нулями
         merged_df = merged_df.fillna(0)
         
-        merged_df.to_excel('7888.xlsx')
         
         # Приводим столбцы к числовому типу
         merged_df['С кред. счетов_df_for_check'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check'], errors='coerce').fillna(0)

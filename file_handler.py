@@ -27,6 +27,9 @@ from register_processors.posting_processor import (Posting_UPPFileProcessor,
 from register_processors.analisys_processor import (Analisys_UPPFileProcessor,
                                                    Analisys_NonUPPFileProcessor)
 
+from register_processors.turnover_processor import (Turnover_UPPFileProcessor,
+                                                   Turnover_NonUPPFileProcessor)
+
 from support_functions import (fix_1c_excel_case,
                                sort_columns,
                                write_df_in_chunks)
@@ -79,12 +82,24 @@ class FileProcessorFactory:
                 'pattern': {'счет', 'кор. счет', 'дебет', 'кредит'},
                 'processor': Analisys_NonUPPFileProcessor
                 }
+            ],
+        'turnover': [
+            {
+                'pattern': {'субконто', 'нач. сальдо деб.', 'нач. сальдо кред.', 'деб. оборот', 'кред. оборот', 'кон. сальдо деб.', 'кон. сальдо кред.'},
+                'processor': Turnover_UPPFileProcessor
+                },
+            {
+                'pattern': {'счет', 'начальное сальдо дт', 'начальное сальдо кт', 'оборот дт', 'оборот кт', 'конечное сальдо дт', 'конечное сальдо кт'},
+                'processor': Turnover_NonUPPFileProcessor
+                }
             ]
     }
 
     @staticmethod
-    def get_processor(file_path: Path, type_registr: Literal['posting', 'card', 'analisys']) -> FileProcessor:
+    def get_processor(file_path: Path, type_registr: Literal['posting', 'card', 'analisys', 'turnovers']) -> FileProcessor:
+        
         fixed_data = fix_1c_excel_case(file_path)
+        
         df = pd.read_excel(fixed_data, header=None, nrows=20)
         
         
@@ -98,7 +113,7 @@ class FileProcessorFactory:
                 row_set = set(row)
                 if pattern_config['pattern'].issubset(row_set):
                     return pattern_config['processor']()
-    
+        
         raise RegisterProcessingError(f"Файл {file_path.name} не является корректным регистром {type_registr} из 1С.\n")
 
 class FileHandler:
@@ -126,6 +141,7 @@ class FileHandler:
             return
         
         try:
+            
             processor = self.processor_factory.get_processor(file_path, self.type_registr)
             if self.verbose:
                 print('Файл в обработке...', end='\r')
@@ -145,6 +161,9 @@ class FileHandler:
             upp_results = [] # для карточки и отчета проводкам
             non_upp_results = [] # для карточки и отчета проводкам
             analisys_result = [] # для анализов (и для УПП и неУПП)
+            analisys_result_check = [] # для результатов сверки до и после обработки анализов (и для УПП и неУПП)
+            turnover_result = [] # для оборотов (и для УПП и неУПП)
+            turnover_result_check = [] # для результатов сверки до и после обработки оборотов (и для УПП и неУПП)
 
             for file_path in tqdm(excel_files, leave=False, desc="Обработка файлов"):
                 try:
@@ -161,6 +180,11 @@ class FileHandler:
                     elif isinstance(processor, (Analisys_UPPFileProcessor,
                                                 Analisys_NonUPPFileProcessor)):
                         analisys_result.append(result)
+                        analisys_result_check.append(check)
+                    elif isinstance(processor, (Turnover_UPPFileProcessor,
+                                                Turnover_NonUPPFileProcessor)):
+                        turnover_result.append(result)
+                        turnover_result_check.append(check)
                     else:
                         non_upp_results.append(result)
                 except Exception:
@@ -178,20 +202,37 @@ class FileHandler:
                 DESIRED_ORDER[self.type_registr]['not_upp']
             ) if non_upp_results else pd.DataFrame()
             
-            
-            
-            
-            #continue#continue#continue#continue#continue#continue#continue
-        
             df_pivot_analisys = sort_columns(
                 pd.concat(analisys_result), 
                 DESIRED_ORDER[self.type_registr]['upp']
             ) if analisys_result else pd.DataFrame()
+            df_pivot_analisys_check = pd.concat(analisys_result_check) if analisys_result_check else pd.DataFrame()
             
-            if not upp_results and not non_upp_results and not analisys_result:
+            df_pivot_analisys = processor.shiftable_level(df_pivot_analisys)
+            
+            df_pivot_turnover = sort_columns(
+                pd.concat(turnover_result), 
+                DESIRED_ORDER[self.type_registr]['upp']
+            ) if turnover_result else pd.DataFrame()
+            df_pivot_turnover_check = pd.concat(turnover_result_check) if turnover_result_check else pd.DataFrame()
+            
+            df_pivot_turnover = processor.shiftable_level(df_pivot_turnover)
+            
+        
+            
+            #continue#continue#continue#continue#continue#continue#continue
+            if (not upp_results 
+                and not non_upp_results
+                and not analisys_result
+                and not turnover_result):
                 raise NoRegisterFilesFoundError(Fore.RED + 'В папке не найдены регистры 1С.')
             
-            self._save_combined_results(df_pivot_upp, df_pivot_non_upp)
+            self._save_combined_results(df_pivot_upp,
+                                        df_pivot_non_upp,
+                                        df_pivot_analisys,
+                                        df_pivot_analisys_check,
+                                        df_pivot_turnover,
+                                        df_pivot_turnover_check,)
         finally:
             self.verbose = original_verbose
     
@@ -241,7 +282,12 @@ class FileHandler:
 
 
     @staticmethod
-    def _save_combined_results(df_upp: pd.DataFrame, df_non_upp: pd.DataFrame) -> None:
+    def _save_combined_results(df_upp: pd.DataFrame,
+                               df_non_upp: pd.DataFrame,
+                               df_analisys: pd.DataFrame,
+                               df_analisys_check: pd.DataFrame,
+                               df_turnover: pd.DataFrame,
+                               df_turnover_check: pd.DataFrame) -> None:
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             temp_filename = tmp.name
         print('Сохраняем свод в файл...         ', end='\r')
@@ -250,6 +296,14 @@ class FileHandler:
                 write_df_in_chunks(writer, df_upp, 'UPP')
             if not df_non_upp.empty:
                 write_df_in_chunks(writer, df_non_upp, 'Non_UPP')
+            if not df_analisys.empty:
+                write_df_in_chunks(writer, df_analisys, 'analisys')
+            if not df_analisys_check.empty:
+                write_df_in_chunks(writer, df_analisys_check, 'analisys_check')
+            if not df_turnover.empty:
+                write_df_in_chunks(writer, df_turnover, 'analisys')
+            if not df_turnover_check.empty:
+                write_df_in_chunks(writer, df_turnover_check, 'analisys_check')
         print('Открываем сводный файл...          ', end='\r')
         if sys.platform == "win32":
             os.startfile(temp_filename)
@@ -258,4 +312,15 @@ class FileHandler:
         else:
             subprocess.run(["xdg-open", temp_filename])
         print('Обработка завершена.               ')
+
     
+
+
+
+
+
+
+
+
+
+

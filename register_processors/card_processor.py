@@ -179,7 +179,7 @@ class Card_UPPFileProcessor(FileProcessor):
         result = result.drop(columns=['Операция'], errors='ignore')
         result.insert(0, 'Имя_файла', os.path.basename(file_path))
         
-        return result
+        return result, self.table_for_check
 
 class Card_NonUPPFileProcessor(FileProcessor):
     """Обработчик для файлов из 1С (не УПП)"""
@@ -294,4 +294,4 @@ class Card_NonUPPFileProcessor(FileProcessor):
         if df.empty:
             raise RegisterProcessingError(Fore.RED + f"Карточка 1с пустая в файле {file_path.name}, обработка невозможна. Файл не УПП\n")
         
-        return df
+        return df, self.table_for_check

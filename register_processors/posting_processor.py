@@ -259,7 +259,8 @@ class Posting_UPPFileProcessor(FileProcessor):
         result.dropna(how='all', inplace=True)
         result.dropna(how='all', axis=1, inplace=True)
         
-        return result
+        return result, self.table_for_check
+    
 
 class Posting_NonUPPFileProcessor(FileProcessor):
     """Обработчик для файлов из 1С (не УПП)"""
@@ -429,4 +430,4 @@ class Posting_NonUPPFileProcessor(FileProcessor):
                 Fore.RED + f"Отчет по проводкам 1с пустой в файле {file_path.name}, обработка невозможна. Файл не УПП"
             )
             
-        return df
+        return df, self.table_for_check
