@@ -39,58 +39,15 @@ class Posting_UPPFileProcessor(FileProcessor):
             result.loc[idx, duplicates] = np.nan
         
         return result
-        
-    
-    # @staticmethod
-    # def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
-    #     """Оптимизированная обработка DataFrame для УПП формата"""
-    #     # Поиск строки с "Дата"
-    #     first_col = df.iloc[:, 0].astype(str).str.lower()
-    #     mask = first_col.str.contains('дата')
-        
-    #     if not mask.any():
-    #         raise RegisterProcessingError(Fore.RED + 'Файл не является Отчетом по проводкам 1с.\n')
-        
-    #     date_row_idx = mask.idxmax()
-        
-    #     # Установка заголовков и очистка
-    #     df.columns = df.iloc[date_row_idx].str.strip()
-    #     df = df.iloc[date_row_idx + 1:].copy()
-        
-    #     # Преобразование даты
-    #     df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
-        
-        
-        
-    #     # Добавляем порядковый номер к повторяющимся значениям документов
-    #     mask = df['Документ'].notna()
-    #     df.loc[mask, 'Документ'] = (
-    #         df.loc[mask, 'Документ'] 
-    #         + '_end' 
-    #         + df.loc[mask].groupby('Документ').cumcount().add(1).astype(str)
-    #     )
-        
-    #     # Заполнение пропусков
-    #     df['Дата'] = df['Дата'].ffill()
-    #     df['Документ'] = df['Документ'].ffill()
-        
-    #     # Переименовываем пустые или NaN заголовки
-    #     df.columns = [
-    #         f'NoNameCol {i+1}' if pd.isna(col) or col == '' else col
-    #         for i, col in enumerate(df.columns)
-    #     ]
-        
-    #     # Удаление пустых строк и столбцов
-    #     df = df[df['Дата'].notna()].copy()
-    #     df = df.dropna(how='all').dropna(how='all', axis=1)
-        
-    #     return df
 
     @staticmethod
     def _process_quantity_section(df: pd.DataFrame) -> pd.DataFrame:
         """Обработка раздела с количеством"""
-        if not (df['Содержание'] == 'Количество').any():
-            return pd.DataFrame()
+        try:
+            if not (df['Содержание'] == 'Количество').any():
+                return pd.DataFrame()
+        except KeyError:
+            raise RegisterProcessingError('не найден или пустой столбец Содержание.')
             
         df_with_count = df[df['Содержание'] == 'Количество'].copy()
         
@@ -114,8 +71,11 @@ class Posting_UPPFileProcessor(FileProcessor):
     @staticmethod
     def _process_currency_section(df: pd.DataFrame) -> pd.DataFrame:
         """Обработка раздела с валютой"""
-        if not (df['Содержание'] == 'Валюта').any():
-            return pd.DataFrame()
+        try:
+            if not (df['Содержание'] == 'Валюта').any():
+                return pd.DataFrame()
+        except KeyError:
+            raise RegisterProcessingError('не найден или пустой столбец Содержание.')
             
         df_with_currency = df[df['Содержание'] == 'Валюта'].copy()
         
@@ -143,10 +103,10 @@ class Posting_UPPFileProcessor(FileProcessor):
         fixed_data = fix_1c_excel_case(file_path)
         df = pd.read_excel(fixed_data, header=None)
         df = df.dropna(axis=1, how='all')
-        
+
         # Обработка DataFrame
         df = self._process_dataframe_optimized(df)
-        
+
         
         # Обработка специальных разделов
         df_with_count = self._process_quantity_section(df)
@@ -156,7 +116,7 @@ class Posting_UPPFileProcessor(FileProcessor):
         
         if df.empty:
             raise RegisterProcessingError(
-                Fore.RED + f"Отчет по проводкам 1с пустой в файле {file_path.name}, обработка невозможна.\n"
+                Fore.RED + "Отчет по проводкам 1с пустой в файле, обработка невозможна."
             )
 
         # Подготовка к pivot
@@ -185,7 +145,7 @@ class Posting_UPPFileProcessor(FileProcessor):
 
         # Упрощение мультииндекса
         operations_pivot.columns = [
-            '_'.join(map(str, col)).strip() if isinstance(col, tuple) else col ##########################################
+            '_'.join(map(str, col)).strip() if isinstance(col, tuple) else col
             for col in operations_pivot.columns.values
         ]
         
@@ -427,7 +387,7 @@ class Posting_NonUPPFileProcessor(FileProcessor):
         
         if df.empty:
             raise RegisterProcessingError(
-                Fore.RED + f"Отчет по проводкам 1с пустой в файле {file_path.name}, обработка невозможна. Файл не УПП"
+                Fore.RED + "Отчет по проводкам 1с пустой, обработка невозможна."
             )
             
         return df, self.table_for_check

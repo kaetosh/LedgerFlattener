@@ -14,13 +14,12 @@ from colorama import init, Fore
 from register_processors.class_processor import FileProcessor, exclude_values
 from custom_errors import RegisterProcessingError
 from support_functions import fix_1c_excel_case
-from register_processors.analisys_processor import accounts_without_subaccount
 
 init(autoreset=True)
 
 
 
-class Turnover_UPPFileProcessor(FileProcessor):
+class AccountOSV_UPPFileProcessor(FileProcessor):
     """Обработчик для Анализа счета 1С УПП"""
     def __init__(self):
         super().__init__()
@@ -53,6 +52,8 @@ class Turnover_UPPFileProcessor(FileProcessor):
 
         '''
         
+        MAX_HEADER_ROWS = 30  # Максимальное количество строк для поиска шапки
+        
         # Заменяем все пустые строки '' на NaN во всём DataFrame (векторизованно)
         df = df.replace('', np.nan)
         
@@ -62,7 +63,7 @@ class Turnover_UPPFileProcessor(FileProcessor):
         
         # Ищем столбец, содержащий "Субконто" в первых 30 строках (или меньше, если строк меньше)
         subkonto_col_idx = None
-        max_rows_to_check = min(30, df.shape[0])  # Проверяем не больше 30 строк
+        max_rows_to_check = min(MAX_HEADER_ROWS, df.shape[0])  # Проверяем не больше 30 строк
         
         for col_idx in range(df.shape[1]):
             col_values = df.iloc[:max_rows_to_check, col_idx].astype(str).str.strip().str.lower()
@@ -79,30 +80,53 @@ class Turnover_UPPFileProcessor(FileProcessor):
 
         # ошибка, если нет искомого значения
         if not mask.any():
-            raise RegisterProcessingError(Fore.RED + 'Файл не является Оборотами счета 1с.\n')
+            raise RegisterProcessingError(Fore.RED + 'Файл не является ОСВ счета 1с.\n')
         # индекс строки с искомым словом
         date_row_idx = mask.idxmax()
-    
+        
         # Установка заголовков и очистка
         df.columns = df.iloc[date_row_idx]
-        
         df = df.iloc[date_row_idx + 1:].copy()
 
         # Переименуем столбцы, в которых находятся уровни и признак курсива
         df.columns = ['Уровень', 'Курсив'] + df.columns[2:].tolist()
-    
+        
+        cols = df.columns.tolist()
+        target_idx_a = cols.index('Сальдо на начало периода')
+        target_idx_b = cols.index('Оборот за период')
+        target_idx_c = cols.index('Сальдо на конец периода')
+       
+        # Новый список имен столбцов — копируем текущие
+        new_cols = cols.copy()
+        
+        # Переименовываем целевой столбец по индексу
+        new_cols[target_idx_a] = 'Дебет_начало'
+        new_cols[target_idx_a + 1] = 'Кредит_начало'
+        
+        new_cols[target_idx_b] = 'Дебет_оборот'
+        new_cols[target_idx_b + 1] = 'Кредит_оборот'
+        
+        new_cols[target_idx_c] = 'Дебет_конец'
+        new_cols[target_idx_c + 1] = 'Кредит_конец'
+        
+        # Присваиваем новый список имен столбцов DataFrame
+        df.columns = new_cols
+        
         # удалим столбцы с пустыми заголовками
         df = df.loc[:, df.columns.notna()]
         df.columns = df.columns.astype(str)
-    
+        
+        # удалим строку содержащую остатки от шапки (Дебет Кредит Дебет Кредит Дебет Кредит)
+        df = df.iloc[1:]
+        
         # если отсутствует иерархия (+ и - на полях excel файла), значит он пуст
         if df['Уровень'].max() == 0:
-            raise RegisterProcessingError(Fore.RED + 'Анализ счета пустой.\n')
+            raise RegisterProcessingError(Fore.RED + 'ОСВ счета пустая.\n')
     
         # Уровень и Курсив должны иметь 0 или 1, иначе - ошибка
         if df['Уровень'].isnull().any() or df['Курсив'].isnull().any():
             raise RegisterProcessingError(Fore.RED + 'Найдены пустые значения в столбцах Уровень или Курсив.\n')
-    
+        
         return df
 
     
@@ -119,8 +143,9 @@ class Turnover_UPPFileProcessor(FileProcessor):
         -------
         df : pd.DataFrame
             Плоская таблица, готовая к конкатенации с другими выгрузками.
-
+        
         '''
+        
         # Имя файла для включения в отдельный столбец итоговой таблицы
         self.file = file_path.name
         
@@ -130,7 +155,6 @@ class Turnover_UPPFileProcessor(FileProcessor):
         # предобработка (добавление столбцов Уровень и Курсив)
         df = self._preprocessor_openpyxl(fixed_data)
         
-
         del fixed_data  # Освобождаем память
         
         # Установка заголовков таблицы и чистка данных
@@ -139,93 +163,15 @@ class Turnover_UPPFileProcessor(FileProcessor):
         # Столбец с именем файла
         df['Исх.файл'] = self.file
         
-        # Избавимся от столбцов с пустыми наименованиями, поскольку это полностью пустые столбцы
-        df = df.loc[:, df.columns.notna()]
         
-        # Приведем наименования столбцов к строковому формату
-        df.columns = df.columns.astype(str)
-        
-        # переименуем для разнообразия
-        df.rename(columns={'Нач. сальдо деб.': 'Дебет_начало',
-                           'Нач. сальдо кред.': 'Кредит_начало',
-                           'Деб. оборот': 'Дебет_оборот',
-                           'Кред. оборот': 'Кредит_оборот',
-                           'Кон. сальдо деб.': 'Дебет_конец',
-                           'Кон. сальдо кред.': 'Кредит_конец'}, inplace=True)
-
-        '''Столбцы с корр счетами разделим на дебетовые и кредитовые.
-        Удалим столбцы с счетами высшего порядка, оставим только субсчета.
-        '''
-        
-        def process_suffix(df, cols, start_idx, end_idx, suffix, accounts_without_subaccount):
-            new_cols = cols.copy()
-            for i in range(start_idx + 1, end_idx):
-                new_cols[i] = f"{cols[i]}{suffix}"
-            df.columns = new_cols
-        
-            # Получаем список столбцов с нужным суффиксом
-            cols_with_suffix = [col for col in df.columns if col.endswith(suffix)]
-            base_cols = [col[:-len(suffix)] for col in cols_with_suffix]
-        
-            # Подсчёт частот
-            counts = pd.Series(base_cols).value_counts().to_dict()
-        
-            # Определяем счета с субсчетами и чистые счета
-            keys = list(counts.keys())
-            acc_with_sub = [acc for acc in counts if self._is_parent(acc, keys)]
-            clean_acc = [acc for acc in counts if counts[acc] == 1 and acc not in acc_with_sub]
-            del_acc = set(counts.keys()) - set(clean_acc)
-            
-        
-            # Обработка счетов с '94'
-            acc_with_94 = [acc for acc in counts if '94' in acc]
-            if '94.Н' in acc_with_94:
-                del_acc.update(acc for acc in acc_with_94 if acc != '94.Н')
-                
-        
-            # Удаление субсчетов для счетов без субсчетов
-            for acc in accounts_without_subaccount:
-                unwanted_subaccounts = [n for n in counts if acc in n and n != acc]
-                del_acc.update(unwanted_subaccounts)
-                
-        
-            # Исключаем счета без субсчетов из удаления
-            del_acc.difference_update(accounts_without_subaccount)
-            
-        
-            # Формируем полный список столбцов для удаления с суффиксом
-            del_acc_full = {acc + suffix for acc in del_acc}
-        
-            # Удаляем столбцы из df
-            df.drop(columns=del_acc_full, inplace=True)
-        
-            return df
-        
-        
-        cols = df.columns.tolist()
-        debit_idx = cols.index('Дебет_оборот')
-        credit_idx = cols.index('Кредит_оборот')
-        end_debit_idx = cols.index('Дебет_конец')
-        
-        df = process_suffix(df, cols, debit_idx, credit_idx, '_до', accounts_without_subaccount)
-        cols = df.columns.tolist()  # обновляем после переименования
-        credit_idx = cols.index('Кредит_оборот')
-        end_debit_idx = cols.index('Дебет_конец')
-        
-        df = process_suffix(df, cols, credit_idx, end_debit_idx, '_ко', accounts_without_subaccount)
-
-
 
         '''Обработка пропущенных значений'''
 
         # Для выгрузок с полем "Количество"
         if 'Показа-\nтели' in df.columns:
-            mask = df['Показа-\nтели'].str.contains('Кол.', na=False)
+            mask = df['Показа-\nтели'].str.contains('Кол.|Вал.', na=False)
             df.loc[~mask, 'Субконто'] = df.loc[~mask, 'Субконто'].fillna('Не_заполнено')
             df['Субконто'] = df['Субконто'].ffill()
-            
-            
-            
         else:
             # Проставляем значение "Количество" (для ОСВ, так как строки с количеством не обозначены)
             df['Субконто'] = np.where(
@@ -243,18 +189,18 @@ class Turnover_UPPFileProcessor(FileProcessor):
                 df = df[(df.index <= index_total) | ((df.index > index_total) & (df['Субконто'] != 'Количество'))]
 
             df.loc[:, 'Субконто'] = df['Субконто'].fillna('Не_заполнено')
-            
-
+    
         # Преобразование в строки и добавление ведущего нуля для счетов до 10 (01, 02 и т.д.)
         mask = (df['Субконто'].str.len() == 1) & self._is_accounting_code_vectorized(df['Субконто'])
         df.loc[mask, 'Субконто'] = '0' + df.loc[mask, 'Субконто']
         df['Субконто'] = df['Субконто'].astype(str)
         
         
+        
         '''Разносим вертикальные данные в горизонтальные'''
         
         max_level = df['Уровень'].max()
-                
+        
         # Обрабатываем специальный случай для "Количество" векторизованно
         quantity_mask = df['Субконто'] == 'Количество'
         
@@ -291,6 +237,7 @@ class Turnover_UPPFileProcessor(FileProcessor):
         df.loc[df[quantity_mask].index, 'Субконто'] = 'Количество'
         
         
+        
         '''Транспонируем количественные и валютные данные'''
         
         # Если таблица с количественными данными, дополним ее столбцами с количеством путем
@@ -306,7 +253,6 @@ class Turnover_UPPFileProcessor(FileProcessor):
                                                              'Кредит_конец',
                                                              ] if col in df.columns]
         desired_order = desired_order_not_with_suff_do_ko.copy()
-        
 
         # Находим столбцы в таблице, заканчивающиеся на '_до' и '_ко'
         do_ko_columns = df.filter(regex='(_до|_ко)$').columns.tolist()
@@ -314,13 +260,13 @@ class Turnover_UPPFileProcessor(FileProcessor):
         # Добавим столбцы, заканчивающиеся на '_до' и '_ко', в таблицу
         if do_ko_columns:
             desired_order += do_ko_columns
-            
+        
         if df['Субконто'].isin(['Количество']).any() or 'Показа-\nтели' in df.columns:
             for i in desired_order:
                 df[f'Количество_{i}'] = df[i].shift(-1)
         
         if df['Субконто'].isin(['Валютная сумма']).any() or 'Показа-\nтели' in df.columns:
-            if df['Субконто'].str.startswith('В валюте').any():
+            if df['Субконто'].str.startswith('Валюта').any():
                 df['Валюта'] = df['Субконто'].shift(-1)
             for i in desired_order:
                 df[f'ВалютнаяСумма_{i}'] = df[i].shift(-2)
@@ -329,7 +275,7 @@ class Turnover_UPPFileProcessor(FileProcessor):
         mask = (
             (df['Субконто'] == 'Количество') |
             (df['Субконто'] == 'Валютная сумма') |
-            (df['Субконто'].str.startswith('В валюте'))
+            (df['Субконто'].str.startswith('Валюта'))
         )
         df = df[~mask]
         
@@ -341,7 +287,6 @@ class Turnover_UPPFileProcessor(FileProcessor):
             
         df_for_check = df[df['Субконто'] == 'Итого'][['Субконто'] + desired_order_not_with_suff_do_ko].copy().tail(2).iloc[[0]]
         df_for_check[desired_order_not_with_suff_do_ko] = df_for_check[desired_order_not_with_suff_do_ko].astype(float).fillna(0)
-        
         
         # Списки необходимых столбцов для каждой новой колонки
         start_debit = 'Дебет_начало'
@@ -365,9 +310,9 @@ class Turnover_UPPFileProcessor(FileProcessor):
         df_for_check = df_for_check[['Сальдо_начало_до_обработки', 'Сальдо_конец_до_обработки', 'Оборот_до_обработки']].reset_index()
 
         
-
         ''' После разнесения строк в плоский вид, в таблице остаются строки с дублирующими оборотами.
         Например, итоговые обороты, итоги по субконто и т.д. Удаляем.'''
+        
         max_level = df['Уровень'].max()
         conditions = []
         
@@ -382,7 +327,10 @@ class Turnover_UPPFileProcessor(FileProcessor):
         # Объединяем все условия
         mask = pd.concat(conditions, axis=1).any(axis=1)
         df = df[~mask]
-
+        
+        # Удаляем строки, содержащие значения Итого
+        df = df[~df['Субконто'].str.contains('Итого')]
+        
         # Удаляем строки, содержащие значения из списка exclude_values
         df = df[~df['Субконто'].isin(exclude_values)]
 
@@ -402,31 +350,14 @@ class Turnover_UPPFileProcessor(FileProcessor):
         Добавляет к таблице с оборотами до обработки, созданной выше,
         данные по оборотам после обработки и отклонениями между ними.
         """
-        
-        # столбцы с дебетовыми оборотами по корр.счетам
-        filtered_cols_do = [
-            col for col in df.columns 
-            if col.endswith('_до') 
-            and not col.startswith('Количество_') 
-            and not col.startswith('ВалютнаяСумма_')
-        ]
-        
-        # столбцы с кредитовыми оборотами по корр.счетам
-        filtered_cols_ko = [
-            col for col in df.columns 
-            if col.endswith('_ко') 
-            and not col.startswith('Количество_') 
-            and not col.startswith('ВалютнаяСумма_')
-        ]
-        
 
         # Вычисление итоговых значений - свернутые значения сальдо и оборотов - обработанных таблиц
         df_check_after_process = pd.DataFrame({
             'Сальдо_начало_после_обработки': [get_col_or_zeros(df, start_debit).sum() - get_col_or_zeros(df, start_credit).sum()],
-            # 'Оборот_после_обработки': [get_col_or_zeros(df, debit_turnover).sum() - get_col_or_zeros(df, credit_turnover).sum()],
-            'Оборот_после_обработки': [df[filtered_cols_do].sum().sum() - df[filtered_cols_ko].sum().sum()],
+            'Оборот_после_обработки': [get_col_or_zeros(df, debit_turnover).sum() - get_col_or_zeros(df, credit_turnover).sum()],
             'Сальдо_конец_после_обработки': [get_col_or_zeros(df, end_debit).sum() - get_col_or_zeros(df, end_credit).sum()]
         })
+
 
         # Объединение таблиц - обороты до и после обработки таблиц
         pivot_df_check = pd.concat([df_for_check, df_check_after_process], axis=1).fillna(0)
@@ -446,7 +377,7 @@ class Turnover_UPPFileProcessor(FileProcessor):
 
         
 
-class Turnover_NonUPPFileProcessor(FileProcessor):
+class AccountOSV_NonUPPFileProcessor(FileProcessor):
     """Обработчик для Анализа счета 1С не УПП"""
     def __init__(self):
         super().__init__()
@@ -478,15 +409,16 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
             Готовая к дальнейшей обработке таблица.
 
         '''
-        MAX_HEADER_ROWS = 30  # Максимальное количество строк для поиска шапки
         
-        # удалим пустые строки и столбцы
+        MAX_HEADER_ROWS = 30  # Максимальное количество строк для поиска шапки
+        # Заменяем все пустые строки '' на NaN во всём DataFrame (векторизованно)
+        df = df.replace('', np.nan)
+        
+        # удалим пустые строки и столбцы        
         df.dropna(axis=1, how='all', inplace=True)
         df.dropna(axis=0, how='all', inplace=True)
         
-        # перед поиском в третьем столбце слова Счет для установки заголовков
-        # убедимся, что столбцов как минимум три
-        # Ищем столбец, содержащий "Счет" в первых 30 строках (или меньше, если строк меньше)
+        # Ищем столбец, содержащий "Субконто" в первых 30 строках (или меньше, если строк меньше)
         subkonto_col_idx = None
         max_rows_to_check = min(MAX_HEADER_ROWS, df.shape[0])  # Проверяем не больше 30 строк
         
@@ -497,38 +429,66 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
                 break
         
         if subkonto_col_idx is None:
-            raise RegisterProcessingError(Fore.RED + 'Не найден столбец с "Счет" в первых 30 строках.\n')
+            raise RegisterProcessingError(Fore.RED + 'Не найден столбец с "Субконто" в первых 30 строках.\n')
         
         # Теперь используем найденный столбец
         first_col = df.iloc[:, subkonto_col_idx].astype(str)
         mask = first_col == 'Счет'
-        
+
         # ошибка, если нет искомого значения
         if not mask.any():
-            raise RegisterProcessingError(Fore.RED + 'Файл не является Анализом счета 1с.\n')
-        
+            raise RegisterProcessingError(Fore.RED + 'Файл не является ОСВ счета 1с.\n')
         # индекс строки с искомым словом
         date_row_idx = mask.idxmax()
+        
     
         # Установка заголовков и очистка
         df.columns = df.iloc[date_row_idx]
+        
         df = df.iloc[date_row_idx + 1:].copy()
-    
+
         # Переименуем столбцы, в которых находятся уровни и признак курсива
         df.columns = ['Уровень', 'Курсив'] + df.columns[2:].tolist()
-    
+        
+        
+        cols = df.columns.tolist()
+
+        target_idx_a = cols.index('Сальдо на начало периода')
+        target_idx_b = cols.index('Обороты за период')
+        target_idx_c = cols.index('Сальдо на конец периода')
+       
+        # Новый список имен столбцов — копируем текущие
+        new_cols = cols.copy()
+        
+        # Переименовываем целевой столбец по индексу
+        new_cols[target_idx_a] = 'Дебет_начало'
+        new_cols[target_idx_a + 1] = 'Кредит_начало'
+        
+        new_cols[target_idx_b] = 'Дебет_оборот'
+        new_cols[target_idx_b + 1] = 'Кредит_оборот'
+        
+        new_cols[target_idx_c] = 'Дебет_конец'
+        new_cols[target_idx_c + 1] = 'Кредит_конец'
+        
+        # Присваиваем новый список имен столбцов DataFrame
+        df.columns = new_cols
+        
         # удалим столбцы с пустыми заголовками
         df = df.loc[:, df.columns.notna()]
         df.columns = df.columns.astype(str)
+        
+        # удалим строку содержащую остатки от шапки (Дебет Кредит Дебет Кредит Дебет Кредит)
+        df = df.iloc[1:]
+        
     
         # если отсутствует иерархия (+ и - на полях excel файла), значит он пуст
         if df['Уровень'].max() == 0:
-            raise RegisterProcessingError(Fore.RED + 'Анализ счета пустой.\n')
+            raise RegisterProcessingError(Fore.RED + 'ОСВ счета пустая.\n')
     
         # Уровень и Курсив должны иметь 0 или 1, иначе - ошибка
         if df['Уровень'].isnull().any() or df['Курсив'].isnull().any():
             raise RegisterProcessingError(Fore.RED + 'Найдены пустые значения в столбцах Уровень или Курсив.\n')
-    
+        
         return df
 
     
@@ -556,7 +516,7 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         
         # предобработка (добавление столбцов Уровень и Курсив)
         df = self._preprocessor_openpyxl(fixed_data)
-
+        
         del fixed_data  # Освобождаем память
         
         # Установка заголовков таблицы и чистка данных
@@ -565,87 +525,20 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         # Столбец с именем файла
         df['Исх.файл'] = self.file
         
-        # Избавимся от столбцов с пустыми наименованиями, поскольку это полностью пустые столбцы
-        df = df.loc[:, df.columns.notna()]
-
-        # Приведем наименования столбцов к строковому формату
-        df.columns = df.columns.astype(str)
         
-        # переименуем для разнообразия
-        df.rename(columns={'Начальное сальдо Дт': 'Дебет_начало',
-                           'Начальное сальдо Кт': 'Кредит_начало',
-                           'Оборот Дт': 'Дебет_оборот',
-                           'Оборот Кт': 'Кредит_оборот',
-                           'Конечное сальдо Дт': 'Дебет_конец',
-                           'Конечное сальдо Кт': 'Кредит_конец'}, inplace=True)
-
-
-        '''Столбцы с корр счетами разделим на дебетовые и кредитовые
-        Удалим столбцы с счетами высшего порядка, оставим только субсчета
-        '''
-        
-        def process_suffix(df, cols, start_idx, end_idx, suffix, accounts_without_subaccount):
-            new_cols = cols.copy()
-            for i in range(start_idx + 1, end_idx):
-                new_cols[i] = f"{cols[i]}{suffix}"
-            df.columns = new_cols
-        
-            # Получаем список столбцов с нужным суффиксом
-            cols_with_suffix = [col for col in df.columns if col.endswith(suffix)]
-            base_cols = [col[:-len(suffix)] for col in cols_with_suffix]
-        
-            # Подсчёт частот
-            counts = pd.Series(base_cols).value_counts().to_dict()
-        
-            # Определяем счета с субсчетами и чистые счета
-            keys = list(counts.keys())
-            acc_with_sub = [acc for acc in counts if self._is_parent(acc, keys)]
-            clean_acc = [acc for acc in counts if counts[acc] == 1 and acc not in acc_with_sub]
-            del_acc = set(counts.keys()) - set(clean_acc)
-        
-            # Обработка счетов с '94'
-            acc_with_94 = [acc for acc in counts if '94' in acc]
-            if '94.Н' in acc_with_94:
-                del_acc.update(acc for acc in acc_with_94 if acc != '94.Н')
-                
-            # Удаление субсчетов для счетов без субсчетов
-            for acc in accounts_without_subaccount:
-                unwanted_subaccounts = [n for n in counts if acc in n and n != acc]
-                del_acc.update(unwanted_subaccounts)
-        
-            # Исключаем счета без субсчетов из удаления
-            del_acc.difference_update(accounts_without_subaccount)
-        
-            # Формируем полный список столбцов для удаления с суффиксом
-            del_acc_full = {acc + suffix for acc in del_acc}
-        
-            # Удаляем столбцы из df
-            df.drop(columns=del_acc_full, inplace=True)
-        
-            return df
-        
-        cols = df.columns.tolist()
-        debit_idx = cols.index('Дебет_оборот')
-        credit_idx = cols.index('Кредит_оборот')
-        end_debit_idx = cols.index('Дебет_конец')
-        
-        df = process_suffix(df, cols, debit_idx, credit_idx, '_до', accounts_without_subaccount)
-        cols = df.columns.tolist()  # обновляем после переименования
-        credit_idx = cols.index('Кредит_оборот')
-        end_debit_idx = cols.index('Дебет_конец')
-        
-        df = process_suffix(df, cols, credit_idx, end_debit_idx, '_ко', accounts_without_subaccount)
- 
         '''Обработка пропущенных значений'''
 
-        # Для выгрузок с полем Количество или Валюта
+        # Для выгрузок с полем "Количество"
         if 'Показа-\nтели' in df.columns:
             mask = df['Показа-\nтели'].str.contains('Кол.|Вал.', na=False)
             df.loc[~mask, 'Счет'] = df.loc[~mask, 'Счет'].fillna('Не_заполнено')
             df['Счет'] = df['Счет'].ffill()
         else:
             # Проставляем значение "Количество" (для ОСВ, так как строки с количеством не обозначены)
-            df['Счет'] = np.where(df['Счет'].isna() & df['Уровень'].eq(df['Уровень'].shift(1)), 'Количество', df['Счет'])
+            df['Счет'] = np.where(
+                                        df['Счет'].isna() & df['Уровень'].eq(df['Уровень'].shift(1)),
+                                        'Количество',
+                                        df['Счет'])
             # Удалим строки, содержащие значение "Количество" ниже строки с Итого. Предыдущий Код "Количество" ниже Итого проставляет даже в регистрах
             # Без количественных значений.
             # Найдем индекс строки, где находится 'Итого'.
@@ -667,7 +560,7 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         '''Разносим вертикальные данные в горизонтальные'''
         
         max_level = df['Уровень'].max()
-                
+        
         # Обрабатываем специальный случай для "Количество" векторизованно
         quantity_mask = df['Счет'] == 'Количество'
         
@@ -720,6 +613,7 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
                                                              ] if col in df.columns]
         desired_order = desired_order_not_with_suff_do_ko.copy()
         
+
         # Находим столбцы в таблице, заканчивающиеся на '_до' и '_ко'
         do_ko_columns = df.filter(regex='(_до|_ко)$').columns.tolist()
 
@@ -727,21 +621,23 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         if do_ko_columns:
             desired_order += do_ko_columns
             
-        if df['Счет'].isin(['Количество']).any() or ('Показа-\nтели' in df.columns and (df['Показа-\nтели'] == 'Кол.').any()):
+        if df['Счет'].isin(['Количество']).any() or 'Показа-\nтели' in df.columns:
             for i in desired_order:
                 df[f'Количество_{i}'] = df[i].shift(-1)
         
-        if df['Счет'].isin(['Валютная сумма']).any() or ('Показа-\nтели' in df.columns and (df['Показа-\nтели'] == 'Вал.').any()):
+        if df['Счет'].isin(['Валютная сумма']).any() or 'Показа-\nтели' in df.columns:
+            if df['Счет'].str.startswith('Валюта').any():
+                df['Валюта'] = df['Счет'].shift(-1)
             for i in desired_order:
-                df[f'ВалютнаяСумма_{i}'] = df[i].shift(-1)
+                df[f'ВалютнаяСумма_{i}'] = df[i].shift(-2)
             
         # Очистим таблицу от строк с количеством и валютой
-        if 'Показа-\nтели' in df.columns:
-            mask = (
-                (df['Показа-\nтели'] == 'Кол.') |
-                (df['Показа-\nтели'] == 'Вал.')
-            )
-            df = df[~mask]
+        mask = (
+            (df['Счет'] == 'Количество') |
+            (df['Счет'] == 'Валютная сумма') |
+            (df['Счет'].str.startswith('Валюта'))
+        )
+        df = df[~mask]
         
         '''Сохраняем данные по оборотам до обработки в таблицах'''
         
@@ -792,8 +688,10 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         mask = pd.concat(conditions, axis=1).any(axis=1)
         df = df[~mask]
 
+        
         # Удаляем строки, содержащие значения из списка exclude_values
         df = df[~df['Счет'].isin(exclude_values)]
+        
 
         df = df.rename(columns={'Счет': 'Субконто'})
         df.drop('Уровень', axis=1, inplace=True)
@@ -812,30 +710,12 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         данные по оборотам после обработки и отклонениями между ними.
         """
         
-        # столбцы с дебетовыми оборотами по корр.счетам
-        filtered_cols_do = [
-            col for col in df.columns 
-            if col.endswith('_до') 
-            and not col.startswith('Количество_') 
-            and not col.startswith('ВалютнаяСумма_')
-        ]
-        
-        # столбцы с кредитовыми оборотами по корр.счетам
-        filtered_cols_ko = [
-            col for col in df.columns 
-            if col.endswith('_ко') 
-            and not col.startswith('Количество_') 
-            and not col.startswith('ВалютнаяСумма_')
-        ]
-        
         # Вычисление итоговых значений - свернутые значения сальдо и оборотов - обработанных таблиц
         df_check_after_process = pd.DataFrame({
             'Сальдо_начало_после_обработки': [get_col_or_zeros(df, start_debit).sum() - get_col_or_zeros(df, start_credit).sum()],
-            # 'Оборот_после_обработки': [get_col_or_zeros(df, debit_turnover).sum() - get_col_or_zeros(df, credit_turnover).sum()],
-            'Оборот_после_обработки': [df[filtered_cols_do].sum().sum() - df[filtered_cols_ko].sum().sum()],
+            'Оборот_после_обработки': [get_col_or_zeros(df, debit_turnover).sum() - get_col_or_zeros(df, credit_turnover).sum()],
             'Сальдо_конец_после_обработки': [get_col_or_zeros(df, end_debit).sum() - get_col_or_zeros(df, end_credit).sum()]
         })
-
 
         # Объединение таблиц - обороты до и после обработки таблиц
         pivot_df_check = pd.concat([df_for_check, df_check_after_process], axis=1).fillna(0)
@@ -852,3 +732,6 @@ class Turnover_NonUPPFileProcessor(FileProcessor):
         self.table_for_check = pivot_df_check
         
         return df, self.table_for_check
+        
+        
+        

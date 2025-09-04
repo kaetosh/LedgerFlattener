@@ -30,6 +30,12 @@ from register_processors.analisys_processor import (Analisys_UPPFileProcessor,
 from register_processors.turnover_processor import (Turnover_UPPFileProcessor,
                                                    Turnover_NonUPPFileProcessor)
 
+from register_processors.accountosv_processor import (AccountOSV_UPPFileProcessor,
+                                                    AccountOSV_NonUPPFileProcessor)
+
+from register_processors.generalosv_processor import (GeneralOSV_UPPFileProcessor,
+                                                    GeneralOSV_NonUPPFileProcessor)
+
 from support_functions import (fix_1c_excel_case,
                                sort_columns,
                                write_df_in_chunks)
@@ -51,6 +57,15 @@ class ExcelValidator:
 
 class FileProcessorFactory:
     """Фабрика для создания обработчиков файлов"""
+    
+    REGISTER_DISPLAY_NAMES = {
+        'posting': 'Отчет по проводкам',
+        'card': 'Карточка счета',
+        'analisys': 'Анализ счета',
+        'turnover': 'Обороты счета',
+        'accountosv': 'ОСВ счета',
+        'generalosv': 'общая ОСВ'
+    }
     
     REGISTER_PATTERNS = {
         'card': [
@@ -92,11 +107,31 @@ class FileProcessorFactory:
                 'pattern': {'счет', 'начальное сальдо дт', 'начальное сальдо кт', 'оборот дт', 'оборот кт', 'конечное сальдо дт', 'конечное сальдо кт'},
                 'processor': Turnover_NonUPPFileProcessor
                 }
+            ],
+        'accountosv': [
+            {
+                'pattern': {'субконто', 'сальдо на начало периода', 'оборот за период', 'сальдо на конец периода'},
+                'processor': AccountOSV_UPPFileProcessor
+                },
+            {
+                'pattern': {'счет', 'сальдо на начало периода', 'обороты за период', 'сальдо на конец периода'},
+                'processor': AccountOSV_NonUPPFileProcessor
+                }
+            ],
+        'generalosv': [
+            {
+                'pattern': {'счет', 'сальдо на начало периода', 'оборот за период', 'сальдо на конец периода'},
+                'processor': GeneralOSV_UPPFileProcessor
+                },
+            {
+                'pattern': {'счет', 'наименование счета', 'сальдо на начало периода', 'обороты за период', 'сальдо на конец периода'},
+                'processor': GeneralOSV_NonUPPFileProcessor
+                }
             ]
     }
 
     @staticmethod
-    def get_processor(file_path: Path, type_registr: Literal['posting', 'card', 'analisys', 'turnovers']) -> FileProcessor:
+    def get_processor(file_path: Path, type_registr: Literal['posting', 'card', 'analisys', 'turnovers', 'accountosv', 'generalosv']) -> FileProcessor:
         
         fixed_data = fix_1c_excel_case(file_path)
         
@@ -114,18 +149,18 @@ class FileProcessorFactory:
                 if pattern_config['pattern'].issubset(row_set):
                     return pattern_config['processor']()
         
-        raise RegisterProcessingError(f"Файл {file_path.name} не является корректным регистром {type_registr} из 1С.\n")
+        raise RegisterProcessingError("Файл не является корректным регистром из 1С.")
 
 class FileHandler:
     def __init__(self, verbose: bool = True):
         self.validator = ExcelValidator()
         self.processor_factory = FileProcessorFactory()
         self.verbose = verbose
-        self.not_correct_files = []
+        self.not_correct_files = {}
         self.storage_processed_registers = {}
         self.check = {}
     
-    def handle_input(self, input_path: Path, type_registr: Literal['posting', 'card', 'analisys']) -> None:
+    def handle_input(self, input_path: Path, type_registr: Literal['posting', 'card', 'analisys', 'account', 'generalosv']) -> None:
         self.type_registr = type_registr
         if input_path.is_file():
             print('Принят файл...', end='\r')
@@ -137,9 +172,8 @@ class FileHandler:
 
     def _process_single_file(self, file_path: Path) -> None:
         if not self.validator.is_valid_excel(file_path):
-            self.not_correct_files.append(file_path.name)
+            self.not_correct_files[file_path.name] = 'не является .xlsx'
             return
-        
         try:
             
             processor = self.processor_factory.get_processor(file_path, self.type_registr)
@@ -148,8 +182,8 @@ class FileHandler:
             result, check = processor.process_file(file_path)
             self.storage_processed_registers[file_path.name] = result
             self.check[file_path.name] = check
-        except RegisterProcessingError:
-            self.not_correct_files.append(file_path.name)
+        except RegisterProcessingError as error_description:
+            self.not_correct_files[file_path.name] = error_description
     
     def _process_directory(self, dir_path: Path) -> None:
         original_verbose = self.verbose
@@ -164,6 +198,10 @@ class FileHandler:
             analisys_result_check = [] # для результатов сверки до и после обработки анализов (и для УПП и неУПП)
             turnover_result = [] # для оборотов (и для УПП и неУПП)
             turnover_result_check = [] # для результатов сверки до и после обработки оборотов (и для УПП и неУПП)
+            accountosv_result = [] # для осв счета (и для УПП и неУПП)
+            accountosv_result_check = [] # для результатов сверки до и после обработки осв счета (и для УПП и неУПП)
+            generalosv_result = [] # для осв общей (и для УПП и неУПП)
+            generalosv_result_check = [] # для результатов сверки до и после обработки осв общей (и для УПП и неУПП)
 
             for file_path in tqdm(excel_files, leave=False, desc="Обработка файлов"):
                 try:
@@ -173,8 +211,6 @@ class FileHandler:
 
                     if isinstance(processor, (Card_UPPFileProcessor,
                                               Posting_UPPFileProcessor,
-                                              # Analisys_UPPFileProcessor,
-                                              # Analisys_NonUPPFileProcessor
                                               )):
                         upp_results.append(result)
                     elif isinstance(processor, (Analisys_UPPFileProcessor,
@@ -185,10 +221,18 @@ class FileHandler:
                                                 Turnover_NonUPPFileProcessor)):
                         turnover_result.append(result)
                         turnover_result_check.append(check)
+                    elif isinstance(processor, (AccountOSV_UPPFileProcessor,
+                                                AccountOSV_NonUPPFileProcessor)):
+                        accountosv_result.append(result)
+                        accountosv_result_check.append(check)
+                    elif isinstance(processor, (GeneralOSV_UPPFileProcessor,
+                                                GeneralOSV_NonUPPFileProcessor)):
+                        generalosv_result.append(result)
+                        generalosv_result_check.append(check)
                     else:
                         non_upp_results.append(result)
-                except Exception:
-                    self.not_correct_files.append(file_path.name)
+                except Exception as error_description:
+                    self.not_correct_files[file_path.name] = error_description
             
             # Обработка результатов
             print('Упорядочиваем столбцы в своде...', end='\r')
@@ -218,13 +262,31 @@ class FileHandler:
             
             df_pivot_turnover = processor.shiftable_level(df_pivot_turnover)
             
+            df_pivot_accountosv = sort_columns(
+                pd.concat(accountosv_result), 
+                DESIRED_ORDER[self.type_registr]['upp']
+            ) if accountosv_result else pd.DataFrame()
+            df_pivot_accountosv_check = pd.concat(accountosv_result_check) if accountosv_result_check else pd.DataFrame()
+            
+            df_pivot_accountosv = processor.shiftable_level(df_pivot_accountosv)
+            
+            df_pivot_generalosv = sort_columns(
+                pd.concat(generalosv_result), 
+                DESIRED_ORDER[self.type_registr]['upp']
+            ) if generalosv_result else pd.DataFrame()
+            df_pivot_generalosv_check = pd.concat(generalosv_result_check) if generalosv_result_check else pd.DataFrame()
+            
+            df_pivot_generalosv = processor.shiftable_level(df_pivot_generalosv)
+            
         
             
-            #continue#continue#continue#continue#continue#continue#continue
+            
             if (not upp_results 
                 and not non_upp_results
                 and not analisys_result
-                and not turnover_result):
+                and not turnover_result
+                and not accountosv_result
+                and not generalosv_result):
                 raise NoRegisterFilesFoundError(Fore.RED + 'В папке не найдены регистры 1С.')
             
             self._save_combined_results(df_pivot_upp,
@@ -232,7 +294,11 @@ class FileHandler:
                                         df_pivot_analisys,
                                         df_pivot_analisys_check,
                                         df_pivot_turnover,
-                                        df_pivot_turnover_check,)
+                                        df_pivot_turnover_check,
+                                        df_pivot_accountosv,
+                                        df_pivot_accountosv_check,
+                                        df_pivot_generalosv,
+                                        df_pivot_generalosv_check,)
         finally:
             self.verbose = original_verbose
     
@@ -287,7 +353,11 @@ class FileHandler:
                                df_analisys: pd.DataFrame,
                                df_analisys_check: pd.DataFrame,
                                df_turnover: pd.DataFrame,
-                               df_turnover_check: pd.DataFrame) -> None:
+                               df_turnover_check: pd.DataFrame,
+                               df_accountosv: pd.DataFrame,
+                               df_accountosv_check: pd.DataFrame,
+                               df_generalosv: pd.DataFrame,
+                               df_generalosv_check: pd.DataFrame) -> None:
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             temp_filename = tmp.name
         print('Сохраняем свод в файл...         ', end='\r')
@@ -301,9 +371,17 @@ class FileHandler:
             if not df_analisys_check.empty:
                 write_df_in_chunks(writer, df_analisys_check, 'analisys_check')
             if not df_turnover.empty:
-                write_df_in_chunks(writer, df_turnover, 'analisys')
+                write_df_in_chunks(writer, df_turnover, 'turnover')
             if not df_turnover_check.empty:
-                write_df_in_chunks(writer, df_turnover_check, 'analisys_check')
+                write_df_in_chunks(writer, df_turnover_check, 'turnover_check')
+            if not df_accountosv.empty:
+                write_df_in_chunks(writer, df_accountosv, 'accountosv')
+            if not df_accountosv_check.empty:
+                write_df_in_chunks(writer, df_accountosv_check, 'accountosv_check')
+            if not df_generalosv.empty:
+                write_df_in_chunks(writer, df_generalosv, 'generalosv')
+            if not df_generalosv_check.empty:
+                write_df_in_chunks(writer, df_generalosv_check, 'generalosv_check')
         print('Открываем сводный файл...          ', end='\r')
         if sys.platform == "win32":
             os.startfile(temp_filename)

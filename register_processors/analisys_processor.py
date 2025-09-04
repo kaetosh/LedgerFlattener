@@ -18,10 +18,7 @@ from support_functions import fix_1c_excel_case
 init(autoreset=True)
 
 
-
-'''
-Счета, субсчета по которым не включаем в итоговые файлы, оставляем только счета
-'''
+# Счета, субсчета по которым не включаем в итоговые файлы, оставляем только счета
 accounts_without_subaccount = ['55', '57']
 
 class Analisys_UPPFileProcessor(FileProcessor):
@@ -33,19 +30,51 @@ class Analisys_UPPFileProcessor(FileProcessor):
     
     @staticmethod
     def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
-        """Поиск строки, содержащей заголовки"""
+        '''
+        Поиск шапки таблицы, переименование заголовков для единообразия
+        выгрузок из других 1С, очистка от пустых строк и столбцов
+        
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            сырая выгрузка в pd.DataFrame из Excel.
+
+        Raises
+        ------
+        RegisterProcessingError
+            Возникает, если обрабатываемый файл не является ОСВ
+            или является пустой ОСВ. Такой файл не обрабатывается.
+            Его имя сохраняется в списке, выводимом в конце обработки.
+
+        Returns
+        -------
+        df : pd.DataFrame
+            Готовая к дальнейшей обработке таблица.
+
+        '''
+        
+        MAX_HEADER_ROWS = 30  # Максимальное количество строк для поиска шапки
         
         # удалим пустые строки и столбцы
         df.dropna(axis=1, how='all', inplace=True)
         df.dropna(axis=0, how='all', inplace=True)
         
-        # перед поиском в третьем столбце слова Счет для установки заголовков
-        # убедимся, что столбцов как минимум три
-        if df.shape[1] < 3:
-            raise RegisterProcessingError(Fore.RED + 'Недостаточно столбцов в DataFrame.\n')
+        # Ищем столбец, содержащий "Счет" в первых 30 строках (или меньше, если строк меньше)
+        subkonto_col_idx = None
+        max_rows_to_check = min(MAX_HEADER_ROWS, df.shape[0])  # Проверяем не больше 30 строк
         
-        # сохраним отдельно столбец для поиска слова Счет и ищем его
-        first_col = df.iloc[:, 2].astype(str)
+        for col_idx in range(df.shape[1]):
+            col_values = df.iloc[:max_rows_to_check, col_idx].astype(str).str.strip().str.lower()
+            if 'счет' in col_values.values:
+                subkonto_col_idx = col_idx
+                break
+        
+        if subkonto_col_idx is None:
+            raise RegisterProcessingError(Fore.RED + 'Не найден столбец с "Счет" в первых 30 строках.\n')
+        
+        # Теперь используем найденный столбец
+        first_col = df.iloc[:, subkonto_col_idx].astype(str)
         mask = first_col == 'Счет'
         
         # ошибка, если нет искомого значения
@@ -78,6 +107,20 @@ class Analisys_UPPFileProcessor(FileProcessor):
 
     
     def process_file(self, file_path: Path) -> pd.DataFrame:
+        '''
+        Основная обработка таблицы.
+
+        Parameters
+        ----------
+        file_path : Path
+            Путь к обрабатываемому файлу (Excel - выгрузка из 1С).
+
+        Returns
+        -------
+        df : pd.DataFrame
+            Плоская таблица, готовая к конкатенации с другими выгрузками.
+
+        '''
         
         # Имя файла для включения в отдельный столбец итоговой таблицы
         self.file = file_path.name
@@ -106,9 +149,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
             for count, idx in enumerate(indices[1:], start=2):
                 cols[idx] = f"{dup_name}_ВАЛ"
         df.columns = cols
-
-
         
+       
         # Сохраним столбец "Вид связи КА" в отдельный фрейм
         if 'Вид связи КА за период' in df.columns and 'Счет' in df.columns:
             df_type_connection = (
@@ -123,12 +165,16 @@ class Analisys_UPPFileProcessor(FileProcessor):
         kor_schet = df['Кор.счет'].astype(str)
         is_valid_account = self._is_accounting_code_vectorized(kor_schet)
         
+    
         # Оптимизированное условие для mask
         mask = df['Счет'].isna()
         mask = mask & ~is_valid_account
         mask = mask & (kor_schet != 'Кол-во:')
         mask = mask & kor_schet.isin(exclude_values)
-    
+        
+        # df.to_excel('Косячный.xlsx')
+        # mask.to_excel('Косячный_mask.xlsx')
+        
         # Заполнение пропусков
         df['Счет'] = np.where(mask, 'Не_заполнено', df['Счет'])
         df['Счет'] = df['Счет'].ffill().astype(str)
@@ -172,8 +218,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
         df['Корр_счет'] = df['Корр_счет'].ffill()
         
         
-        
         '''Сохраним данные по оборотам до обработки в разрезе корр счетов для проверки с данными после обработки'''
+        
         df_for_check = df[['Кор.счет', 'С кред. счетов', 'В дебет счетов']].copy()
 
         # Векторизированная маска
@@ -203,15 +249,12 @@ class Analisys_UPPFileProcessor(FileProcessor):
         # Группировка и сброс индекса
         df_for_check = df_for_check.groupby('Кор.счет_ЧЕК')[['С кред. счетов', 'В дебет счетов']].sum().reset_index()
         
-
-        
         # Сохраним для дальнейшего использования
         self.table_for_check = df_for_check
         
                 
-        '''
-        Удаляем лишние строки (суммирующие, со счетами, которые расшифрованы по субсчетам и тд)
-        '''
+        '''Удаляем лишние строки (суммирующие, со счетами, которые расшифрованы по субсчетам и тд)'''
+        
         df_delete = df[~df['Кор.счет'].isin(exclude_values)].dropna(subset=['Кор.счет'])
         df_delete = df_delete[df_delete['Курсив'] == 0][['Кор.счет', 'Корр_счет']]
         unique_df = df_delete.drop_duplicates(subset=['Кор.счет', 'Корр_счет']).dropna(subset=['Корр_счет'])
@@ -221,7 +264,9 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         # Счета с субсчетами
         acc_with_sub = [i for i in all_acc_dict if self._is_parent(i, list(all_acc_dict.keys()))]
+        
         clean_acc = [i for i in all_acc_dict if all_acc_dict[i] == 1 and i not in acc_with_sub]
+        
         del_acc = set(all_acc_dict.keys()) - set(clean_acc)
         
         # Обработка счетов 94
@@ -266,12 +311,10 @@ class Analisys_UPPFileProcessor(FileProcessor):
             (df['Курсив'] == 0)
         ].copy()
         
-        
         shiftable_level = 'Level_0'
         list_level_col = [i for i in df.columns.to_list() if i.startswith('Level')]
         for i in list_level_col[::-1]:
             if all(self._is_accounting_code_vectorized(df[i])):
-            # if all(df[i].apply(self._is_accounting_code)):
                 shiftable_level = i
                 break
         
@@ -290,6 +333,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
             'Счет': 'Аналитика'
         })
         
+        
+        
         # Указание порядка столбцов
         desired_order = ['Исх.файл', 'Субсчет', 'Аналитика', 'Вид связи КА за период', 
                          'Корр_счет', 'Субконто_корр_счета', 'С кред. счетов', 'С кред. счетов_ВАЛ', 'В дебет счетов', 'В дебет счетов_ВАЛ']
@@ -302,6 +347,13 @@ class Analisys_UPPFileProcessor(FileProcessor):
         # Добавление level колонок
         level_columns = [col for col in df.columns if 'Level_' in col]
         new_order = [col for col in desired_order if col in df.columns] + level_columns
+        
+        #---------------------------------------------------------------------------------------------------
+        '''
+        Нужно решить проблему, когда аналитика в столбце с корр.счетами содержит промежуточные итоги, но они не курсив
+        и алгоритм их оставляет. Такие итоги пока обнаружены, если ставить прихнак Валюта
+        '''
+        
         df = df[new_order]
         
         # Финальная обработка
@@ -315,10 +367,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         
         
-        '''
-        Подбиваем обороты в разрезе корр. субсчетов и считаем разницы с оборотами 
-        до обработки
-        '''
+        '''Подбиваем обороты в разрезе корр. субсчетов и считаем разницы с оборотами до обработки'''
+        
         df_for_check = self.table_for_check
 
         # Векторизованное создание колонки
@@ -363,6 +413,113 @@ class Analisys_UPPFileProcessor(FileProcessor):
         # Добавляем информацию о файле
         merged_df['Исх.файл'] = self.file
         
+        
+        
+        
+        
+        #---------------------------------------------------------------
+        def find_sum_indices(df, value_column='Стоимость', max_lookahead=30, tolerance=0.01):
+            """
+            Быстрый алгоритм с использованием динамического программирования.
+            """
+            sum_indices = []
+            cost_values = df[value_column].values
+            indices = df.index.values
+            
+            for i in range(len(df)):
+                target_cost = cost_values[i]
+                target_idx = indices[i]
+                
+                # Ограничиваем область поиска
+                end = min(i + max_lookahead + 1, len(df))
+                next_costs = cost_values[i+1:end]
+                
+                # Используем множество для отслеживания достижимых сумм
+                possible_sums = {0}
+                
+                for cost in next_costs:
+                    new_sums = set()
+                    for s in possible_sums:
+                        new_sum = s + cost
+                        if abs(new_sum - target_cost) <= tolerance:
+                            sum_indices.append(target_idx)
+                            break
+                        if new_sum <= target_cost + tolerance:
+                            new_sums.add(new_sum)
+                    else:
+                        possible_sums |= new_sums
+                        continue
+                    break
+            
+            return sum_indices
+                        
+        merged_df.to_excel('merged_df.xlsx')
+        
+        if merged_df.loc[:, 'Разница_С_кред'].sum() !=0:
+            result_list = merged_df.loc[merged_df['Разница_С_кред'] != 0, 'Кор.счет_ЧЕК'].tolist()
+            # Предполагаем, что df — ваш датафрейм
+            for i in result_list:
+                df_filtered = df[df['Корр_счет'].str[:2] == i]
+                ind_for_delete = find_sum_indices(df_filtered, value_column='С кред. счетов')
+                df = df.drop(ind_for_delete)
+                
+        if merged_df.loc[:, 'Разница_В_дебет'].sum() !=0:
+            result_list = merged_df.loc[merged_df['Разница_В_дебет'] != 0, 'Кор.счет_ЧЕК'].tolist()
+            # Предполагаем, что df — ваш датафрейм
+            for i in result_list:
+                df_filtered = df[df['Корр_счет'].str[:2] == i]
+                ind_for_delete = find_sum_indices(df_filtered, value_column='В дебет счетов')
+                df = df.drop(ind_for_delete)
+            
+            
+            
+        # Повторно
+        # Векторизованное создание колонки
+        df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()
+        corr_schet = df_for_check_2['Корр_счет'].astype(str)
+        df_for_check_2['Кор.счет_ЧЕК'] = np.where(
+            (corr_schet.str.len() >= 2) & (corr_schet != '000'),
+            corr_schet.str[:2],
+            corr_schet
+        )
+        
+        # Группировка
+        df_for_check_2 = df_for_check_2.groupby('Кор.счет_ЧЕК', as_index=False).agg({
+            'С кред. счетов': 'sum',
+            'В дебет счетов': 'sum'
+        })
+        
+
+        # Объединяем DataFrame
+        merged_df = df_for_check.merge(
+            df_for_check_2, 
+            on='Кор.счет_ЧЕК', 
+            how='outer',
+            suffixes=('_df_for_check', '_df_for_check_2')
+        )
+        
+        # Заполняем пропуски нулями
+        merged_df = merged_df.fillna(0)
+        
+        # Приводим столбцы к числовому типу
+        merged_df['С кред. счетов_df_for_check'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check'], errors='coerce').fillna(0)
+        merged_df['В дебет счетов_df_for_check'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check'], errors='coerce').fillna(0)
+        merged_df['С кред. счетов_df_for_check_2'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check_2'], errors='coerce').fillna(0)
+        merged_df['В дебет счетов_df_for_check_2'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check_2'], errors='coerce').fillna(0)
+        
+        # Вычисляем разницы
+        merged_df['Разница_С_кред'] = (merged_df['С кред. счетов_df_for_check'] - 
+                                        merged_df['С кред. счетов_df_for_check_2']).round()
+        merged_df['Разница_В_дебет'] = (merged_df['В дебет счетов_df_for_check'] - 
+                                         merged_df['В дебет счетов_df_for_check_2']).round()
+        
+        # Добавляем информацию о файле
+        merged_df['Исх.файл'] = self.file
+        
+        
+        
+        
+        #---------------------------------------------------------------
         # Сохраняем результат
         self.table_for_check = merged_df
         
@@ -378,6 +535,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
         if col_with_subacc:
             df['Субсчет'] = df.loc[:, col_with_subacc]
         
+        
+        
         return df, self.table_for_check
 
         
@@ -391,19 +550,51 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
     
     @staticmethod
     def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
-        """Поиск строки, содержащей заголовки"""
+        '''
+        Поиск шапки таблицы, переименование заголовков для единообразия
+        выгрузок из других 1С, очистка от пустых строк и столбцов
+        
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            сырая выгрузка в pd.DataFrame из Excel.
+
+        Raises
+        ------
+        RegisterProcessingError
+            Возникает, если обрабатываемый файл не является ОСВ
+            или является пустой ОСВ. Такой файл не обрабатывается.
+            Его имя сохраняется в списке, выводимом в конце обработки.
+
+        Returns
+        -------
+        df : pd.DataFrame
+            Готовая к дальнейшей обработке таблица.
+
+        '''
+        
+        MAX_HEADER_ROWS = 30  # Максимальное количество строк для поиска шапки
         
         # удалим пустые строки и столбцы
         df.dropna(axis=1, how='all', inplace=True)
         df.dropna(axis=0, how='all', inplace=True)
         
-        # перед поиском в третьем столбце слова Счет для установки заголовков
-        # убедимся, что столбцов как минимум три
-        if df.shape[1] < 3:
-            raise RegisterProcessingError(Fore.RED + 'Недостаточно столбцов в DataFrame.\n')
+        # Ищем столбец, содержащий "Субконто" в первых 30 строках (или меньше, если строк меньше)
+        subkonto_col_idx = None
+        max_rows_to_check = min(MAX_HEADER_ROWS, df.shape[0])  # Проверяем не больше 30 строк
         
-        # сохраним отдельно столбец для поиска слова Счет и ищем его
-        first_col = df.iloc[:, 2].astype(str)
+        for col_idx in range(df.shape[1]):
+            col_values = df.iloc[:max_rows_to_check, col_idx].astype(str).str.strip().str.lower()
+            if 'счет' in col_values.values:
+                subkonto_col_idx = col_idx
+                break
+        
+        if subkonto_col_idx is None:
+            raise RegisterProcessingError(Fore.RED + 'Не найден столбец с "Счет" в первых 30 строках.\n')
+        
+        # Теперь используем найденный столбец
+        first_col = df.iloc[:, subkonto_col_idx].astype(str)
         mask = first_col == 'Счет'
         
         # ошибка, если нет искомого значения
@@ -436,6 +627,20 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
 
     
     def process_file(self, file_path: Path) -> pd.DataFrame:
+        '''
+        Основная обработка таблицы.
+
+        Parameters
+        ----------
+        file_path : Path
+            Путь к обрабатываемому файлу (Excel - выгрузка из 1С).
+
+        Returns
+        -------
+        df : pd.DataFrame
+            Плоская таблица, готовая к конкатенации с другими выгрузками.
+
+        '''
         
         # Имя файла для включения в отдельный столбец итоговой таблицы
         self.file = file_path.name
@@ -452,7 +657,6 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         
         # Столбец с именем файла
         df['Исх.файл'] = self.file
-        
         
         # Сохраним столбец "Вид связи КА" в отдельный фрейм
         if 'Вид связи КА за период' in df.columns and 'Счет' in df.columns:
@@ -478,18 +682,12 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         # Заполнение пропусков
         df['Счет'] = np.where(mask, 'Не_заполнено', df['Счет'])
         
-        # df.to_excel('100.xlsx')
-        # mask.to_excel('101.xlsx')
-        
         df['Счет'] = df['Счет'].ffill().astype(str)
 
-    
         # Добавляем '0' для счетов до 10
         account_is_valid = self._is_accounting_code_vectorized(df['Счет'])
         mask_pad = (df['Счет'].str.len() == 1) & account_is_valid
         df.loc[mask_pad, 'Счет'] = '0' + df.loc[mask_pad, 'Счет']
-        
-        
         
 
         '''Разносим вертикальные данные в горизонтальные'''
@@ -509,14 +707,8 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
             higher_level_mask = df['Уровень'] < level
             df.loc[higher_level_mask, f'Level_{level}'] = None
         
-        
-    
         # Создаем столбец Корр_счет
         df['Корр_счет'] = np.where(is_valid_account, kor_schet, None)
-        
-
-        
-        
         
         # Добавляем '0' для корр. счетов - исправляем проблему типов
         korr_schet_str = df['Корр_счет'].astype(str)
@@ -531,11 +723,8 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         df['Корр_счет'] = df['Корр_счет'].ffill()
         
         
-        
-        
-        
-        
         '''Сохраним данные по оборотам до обработки в разрезе корр счетов для проверки с данными после обработки'''
+        
         df_for_check = df[['Кор. Счет', 'Дебет', 'Кредит']].copy()
 
         # Векторизированная маска
@@ -575,15 +764,12 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         self.table_for_check = df_for_check
         
                 
-        '''
-        Удаляем лишние строки (суммирующие, со счетами, которые расшифрованы по субсчетам и тд)
-        '''
+        '''Удаляем лишние строки (суммирующие, со счетами, которые расшифрованы по субсчетам и тд)'''
+        
         df_delete = df[~df['Кор. Счет'].isin(exclude_values)].dropna(subset=['Кор. Счет'])
         df_delete = df_delete[df_delete['Курсив'] == 0][['Кор. Счет', 'Корр_счет']]
         unique_df = df_delete.drop_duplicates(subset=['Кор. Счет', 'Корр_счет']).dropna(subset=['Корр_счет'])
-        
-
-        
+    
         # Подсчет уникальных значений
         all_acc_dict = unique_df['Корр_счет'].value_counts().to_dict()
         
@@ -658,9 +844,6 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         mask = self._is_accounting_code_vectorized(df['Субсчет'])
         df['Субсчет'] = np.where(mask, df['Субсчет'], 'Без_субсчетов')
         
-        
-
-        
         # Переименование столбцов
         df = df.rename(columns={
             'Кор. Счет': 'Субконто_корр_счета',
@@ -697,11 +880,8 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         df = df[(df['В дебет счетов'] != 0) | (df['В дебет счетов'].notna())]
         
         
+        '''Подбиваем обороты в разрезе корр. субсчетов и считаем разницы с оборотами до обработки'''
         
-        '''
-        Подбиваем обороты в разрезе корр. субсчетов и считаем разницы с оборотами 
-        до обработки
-        '''
         df_for_check = self.table_for_check
 
         # Векторизованное создание колонки
@@ -718,8 +898,7 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
             'С кред. счетов': 'sum',
             'В дебет счетов': 'sum'
         })
-        
-
+    
         # Объединяем DataFrame
         merged_df = df_for_check.merge(
             df_for_check_2, 
@@ -730,7 +909,6 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         
         # Заполняем пропуски нулями
         merged_df = merged_df.fillna(0)
-        
         
         # Приводим столбцы к числовому типу
         merged_df['С кред. счетов_df_for_check'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check'], errors='coerce').fillna(0)
@@ -753,7 +931,7 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         
         '''
         Выровняем столбцы так, чтобы счета оказались в одном столбце без аналитики и субконто,
-        затем обновим значения столбца Субсчет (сейчас в нем счета), включив в него именно субсчета
+        затем обновим значения столбца Субсчет (сейчас в нем счета), включив в него именно субсчета.
         '''
         
         df = self.shiftable_level(df)
@@ -763,6 +941,3 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
             df['Субсчет'] = df.loc[:, col_with_subacc]
         
         return df, self.table_for_check
-        
-        
-        

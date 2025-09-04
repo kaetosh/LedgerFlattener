@@ -11,11 +11,20 @@ from io import BytesIO
 from colorama import init, Fore
 from typing import List
 
+import openpyxl
 import xlwings as xw
 import pandas as pd
 
 import tempfile
 import os
+
+
+
+
+
+
+
+
 
 
 
@@ -36,8 +45,9 @@ exclude_values = ['Нач.сальдо',
                   'Кол-во:',
                   'Итого',
                   'Количество',
-                  'ЗАПЧАСТИ И КОМПЛЕКТУЮЩИЕ',
-                  'Покупатели/Поставщики']
+                  # 'ЗАПЧАСТИ И КОМПЛЕКТУЮЩИЕ',
+                  # 'Покупатели/Поставщики',
+                  ]
 
 
 DESIRED_ORDER = {'card':{
@@ -95,7 +105,7 @@ DESIRED_ORDER = {'card':{
                         'Дебет_оборот', 'Количество_Дебет_оборот', 'ВалютнаяСумма_Дебет_оборот',
                         'Кредит_оборот', 'Количество_Кредит_оборот', 'ВалютнаяСумма_Кредит_оборот',
                         'Дебет_конец', 'Количество_Дебет_конец', 'ВалютнаяСумма_Дебет_конец',
-                        'Кредит_конец', 'Количество_Кредит_конец', 'ВалютнаяСумма_Кредит_конец',
+                        'Кредит_конец', 'Количество_Кредит_конец', 'ВалютнаяСумма_Кредит_конец','Валюта',
                         'Начало периода  для вида связи', 'Конец  периода для вида связи', 'Вид связи КА за период',
                         'Level_0', 'Level_1', 'Level_2'
                         ],
@@ -106,10 +116,40 @@ DESIRED_ORDER = {'card':{
                        'Дебет_оборот', 'Количество_Дебет_оборот', 'ВалютнаяСумма_Дебет_оборот',
                        'Кредит_оборот', 'Количество_Кредит_оборот', 'ВалютнаяСумма_Кредит_оборот',
                        'Дебет_конец', 'Количество_Дебет_конец', 'ВалютнаяСумма_Дебет_конец',
-                       'Кредит_конец', 'Количество_Кредит_конец', 'ВалютнаяСумма_Кредит_конец',
+                       'Кредит_конец', 'Количество_Кредит_конец', 'ВалютнаяСумма_Кредит_конец','Валюта',
                        'Начало периода  для вида связи', 'Конец  периода для вида связи', 'Вид связи КА за период',
                        'Level_0', 'Level_1', 'Level_2'
-                    ]}
+                    ]},
+                'accountosv':{
+                    'upp': [
+                        'Исх.файл', 'Субконто',
+                        'Дебет_начало', 'Количество_Дебет_начало', 'ВалютнаяСумма_Дебет_начало',
+                        'Кредит_начало', 'Количество_Кредит_начало', 'ВалютнаяСумма_Кредит_начало',
+                        'Дебет_оборот', 'Количество_Дебет_оборот', 'ВалютнаяСумма_Дебет_оборот',
+                        'Кредит_оборот', 'Количество_Кредит_оборот', 'ВалютнаяСумма_Кредит_оборот',
+                        'Дебет_конец', 'Количество_Дебет_конец', 'ВалютнаяСумма_Дебет_конец',
+                        'Кредит_конец', 'Количество_Кредит_конец', 'ВалютнаяСумма_Кредит_конец', 'Валюта',
+                        'Начало периода  для вида связи', 'Конец  периода для вида связи', 'Вид связи КА за период',
+                        'Level_0', 'Level_1', 'Level_2'
+                        ],
+                    'not_upp': [
+                       'Исх.файл', 'Субконто',
+                       'Дебет_начало', 'Количество_Дебет_начало', 'ВалютнаяСумма_Дебет_начало',
+                       'Кредит_начало', 'Количество_Кредит_начало', 'ВалютнаяСумма_Кредит_начало',
+                       'Дебет_оборот', 'Количество_Дебет_оборот', 'ВалютнаяСумма_Дебет_оборот',
+                       'Кредит_оборот', 'Количество_Кредит_оборот', 'ВалютнаяСумма_Кредит_оборот',
+                       'Дебет_конец', 'Количество_Дебет_конец', 'ВалютнаяСумма_Дебет_конец',
+                       'Кредит_конец', 'Количество_Кредит_конец', 'ВалютнаяСумма_Кредит_конец','Валюта',
+                       'Начало периода  для вида связи', 'Конец  периода для вида связи', 'Вид связи КА за период',
+                       'Level_0', 'Level_1', 'Level_2'
+                    ]},
+                'generalosv':{
+                    'upp': [
+                        'Исх.файл', 'Счет', 'Наименование', 'Дебет_начало', 'Кредит_начало', 'Дебет_оборот', 'Кредит_оборот', 'Дебет_конец', 'Кредит_конец'
+                        ],
+                    'not_upp': [
+                       'Исх.файл', 'Счет', 'Наименование', 'Дебет_начало', 'Кредит_начало', 'Дебет_оборот', 'Кредит_оборот', 'Дебет_конец', 'Кредит_конец'
+                       ]}
 }
 
 class FileProcessor(ABC):
@@ -188,153 +228,96 @@ class FileProcessor(ABC):
         
         return result
 
-    
-    # @staticmethod
-    # def _preprocessor_openpyxl(file_like_object: BytesIO) -> pd.DataFrame:
-    #     """Читает файлы Excel и добавляет столбцы с группировками и курсивом без сохранения файлов"""
-
-    #     # Загружаем книгу из BytesIO
-    #     workbook = openpyxl.load_workbook(file_like_object)
-        
-    #     sheet = workbook.active
-        
-    #     # Получаем данные об уровнях группировок
-    #     grouping_levels = []
-    #     for row_index in range(1, sheet.max_row + 1):
-    #         grouping_levels.append(sheet.row_dimensions[row_index].outline_level)
-        
-    #     # Получаем данные о курсивных ячейках
-    #     italic_flags = [0] * sheet.max_row  # Инициализируем нулями
-        
-    #     # Ищем столбец с определенными значениями
-    #     found_kor_schet_col = None
-    #     for row in sheet.iter_rows(values_only=True):
-    #         found_value = next((value for value in ['Кор. Счет', 'Кор.счет'] if value in row), None)
-    #         if found_value is not None:
-    #             found_kor_schet_col = row.index(found_value) + 1
-    #             break
-        
-    #     # Если нашли нужный столбец, проверяем курсив
-    #     if found_kor_schet_col:
-    #         for row_index in range(2, sheet.max_row + 1):
-    #             kor_schet_cell = sheet.cell(row=row_index, column=found_kor_schet_col)
-    #             italic_flags[row_index - 1] = 1 if kor_schet_cell.font and kor_schet_cell.font.italic else 0
-        
-    #     # Читаем данные в DataFrame
-    #     data = []
-    #     for row in sheet.iter_rows(values_only=True):
-    #         data.append(row)
-        
-    #     df = pd.DataFrame(data[1:], columns=data[0])  # Пропускаем заголовок
-        
-    #     # Добавляем столбцы с группировками и курсивом
-    #     df.insert(0, 'Уровень_группировки', grouping_levels[1:])  # Пропускаем заголовок
-    #     df.insert(1, 'Курсив', italic_flags[1:])  # Пропускаем заголовок
-        
-    #     workbook.close()
-        
-    #     return df
-
-
-
-
-    
+   
     @staticmethod
     def _preprocessor_openpyxl(file_like_object: BytesIO) -> pd.DataFrame:
-        """Читает файлы Excel с помощью xlwings и добавляет столбцы с группировками и курсивом,
-           с учётом форматирования (включая ведущие нули)"""
+        # Ключевые заголовки для поиска проблемной строки
+        target_headers = {
+            'субконто', 'нач. сальдо деб.', 'нач. сальдо кред.',
+            'деб. оборот', 'кред. оборот', 'кон. сальдо деб.', 'кон. сальдо кред.'
+        }
     
-        # Создаем временный файл для xlwings
-        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_file:
-            tmp_file.write(file_like_object.getvalue())
-            tmp_file_path = tmp_file.name
+        # --- Читаем файл через openpyxl ---
+        workbook = openpyxl.load_workbook(file_like_object)
+        sheet = workbook.active
     
-        try:
-            # Запускаем Excel в фоновом режиме
-            app = xw.App(visible=False)
-            wb = app.books.open(tmp_file_path)
-            sheet = wb.sheets[0]
+        max_row = sheet.max_row
+        max_col = sheet.max_column
     
-            # Получаем используемый диапазон
-            used_range = sheet.used_range
-            max_row = used_range.last_cell.row
-            max_col = used_range.last_cell.column
+        # Получаем уровни группировки (для всех строк)
+        grouping_levels = [sheet.row_dimensions[row_idx].outline_level for row_idx in range(1, max_row + 1)]
     
-            # Получаем данные об уровнях группировок (через openpyxl для этой части)
-            from openpyxl import load_workbook
-            wb_openpyxl = load_workbook(file_like_object)
-            sheet_openpyxl = wb_openpyxl.active
-            grouping_levels = []
-            for row_index in range(1, max_row + 1):
-                grouping_levels.append(sheet_openpyxl.row_dimensions[row_index].outline_level)
-            wb_openpyxl.close()
-    
-            # Получаем данные о курсивных ячейках
-            italic_flags = [0] * max_row
-    
-            # Ищем столбец с определенными значениями в первых 30 строках
-            found_kor_schet_col = None
-            for row_num in range(1, min(31, max_row + 1)):
-                for col_num in range(1, max_col + 1):
-                    cell_value = sheet.cells(row_num, col_num).value
-                    if cell_value in ['Кор. Счет', 'Кор.счет']:
-                        found_kor_schet_col = col_num
-                        break
-                if found_kor_schet_col:
+        # Ищем столбец с "Кор. Счет" или "Кор.счет" для курсивности
+        found_kor_schet_col = None
+        for row in sheet.iter_rows(min_row=1, max_row=30, values_only=True):
+            for idx, cell_val in enumerate(row, start=1):
+                if cell_val in ('Кор. Счет', 'Кор.счет'):
+                    found_kor_schet_col = idx
                     break
-    
-            # Если нашли нужный столбец, проверяем курсив
             if found_kor_schet_col:
-                for row_index in range(2, max_row + 1):
-                    cell = sheet.cells(row_index, found_kor_schet_col)
-                    # Проверяем курсив через API Excel
-                    if cell.api.Font.Italic:
-                        italic_flags[row_index - 1] = 1
+                break
     
-            # Читаем данные в DataFrame с форматированием
-            data = []
-            headers = []
-            
-            # Читаем заголовки (первая строка)
-            header_row = []
-            for col in range(1, max_col + 1):
-                cell = sheet.cells(1, col)
-                header_row.append(cell.api.Text)  # Отформатированное значение
-            headers = header_row
-            
-            # Читаем остальные строки
-            for row in range(2, max_row + 1):
-                row_data = []
-                for col in range(1, max_col + 1):
-                    cell = sheet.cells(row, col)
-                    # Получаем отформатированное значение (как оно отображается в Excel)
-                    formatted_value = cell.api.Text
-                    row_data.append(formatted_value)
-                data.append(row_data)
+        # Получаем флаги курсивности по найденному столбцу
+        italic_flags = [0] * max_row
+        if found_kor_schet_col:
+            for row_idx in range(2, max_row + 1):
+                cell = sheet.cell(row=row_idx, column=found_kor_schet_col)
+                italic_flags[row_idx - 1] = 1 if cell.font and cell.font.italic else 0
     
-            # Создаем DataFrame
-            df = pd.DataFrame(data, columns=headers) if data else pd.DataFrame()
+        # Читаем все данные в список
+        data = []
+        for row in sheet.iter_rows(min_row=1, max_row=max_row, max_col=max_col, values_only=True):
+            data.append(list(row))
     
-            # Добавляем столбцы с группировками и курсивом
-            if len(grouping_levels) > 1:
-                df.insert(0, 'Уровень_группировки', grouping_levels[1:max_row])
-            if len(italic_flags) > 1:
-                df.insert(1, 'Курсив', italic_flags[1:max_row])
+        # Находим индекс строки с заголовками, содержащей все ключевые слова
+        header_row_idx = None
+        for i in range(min(30, len(data))):
+            row_values = [str(cell).strip().lower() if cell is not None else '' for cell in data[i]]
+            if target_headers.issubset(set(row_values)):
+                header_row_idx = i
+                break
     
-            # Закрываем книгу и приложение
-            wb.close()
-            app.quit()
+        # Если нашли проблемную строку — считываем её с xlwings для точного форматирования
+        if header_row_idx is not None:
+            # --- Считаем проблемную строку с xlwings для точного форматирования ---
+            # Сохраняем BytesIO во временный файл (xlwings не работает с BytesIO напрямую)
+            with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_file:
+                tmp_file.write(file_like_object.getvalue())
+                tmp_path = tmp_file.name
     
-            return df
-    
-        finally:
-            # Удаляем временный файл
             try:
-                os.unlink(tmp_file_path)
-            except:
-                pass
-
-
+                app = xw.App(visible=False)
+                wb_xl = app.books.open(tmp_path)
+                sht_xl = wb_xl.sheets[0]
+    
+                # Читаем отформатированные значения проблемной строки (1-based индексация в xlwings)
+                formatted_header_row = []
+                for col_idx in range(1, max_col + 1):
+                    cell = sht_xl.cells(header_row_idx + 1, col_idx)
+                    formatted_header_row.append(cell.api.Text)  # именно отображаемое значение
+    
+                wb_xl.close()
+                app.quit()
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+    
+            # Заменяем строку в данных на отформатированную из xlwings
+            data[header_row_idx] = formatted_header_row
+    
+        # Формируем DataFrame из всех строк начиная со второй (строка 1 Excel — заголовки или данные, но мы не выделяем)
+        # Все строки, включая проблемную, идут в данные DataFrame без выделения заголовка
+        df = pd.DataFrame(data[1:], columns=None)  # columns=None, чтобы не использовать какую-либо строку как заголовок
+    
+        # Добавляем столбцы группировки и курсивности для всех строк DataFrame
+        # grouping_levels[1:] — уровни для строк 2 и далее (Excel строки 2+)
+        df.insert(0, 'Уровень_группировки', grouping_levels[1:])
+        df.insert(1, 'Курсив', italic_flags[1:])
+    
+        workbook.close()
+        return df
 
     
     @staticmethod
@@ -344,7 +327,7 @@ class FileProcessor(ABC):
         mask = first_col.str.contains('дата')
         
         if not mask.any():
-            raise RegisterProcessingError(Fore.RED + 'Файл не является Отчетом по проводкам 1с.\n')
+            raise RegisterProcessingError(Fore.RED + 'Файл не является регистром 1с.')
         
         date_row_idx = mask.idxmax()
         
@@ -352,9 +335,13 @@ class FileProcessor(ABC):
         df.columns = df.iloc[date_row_idx].str.strip()
         df = df.iloc[date_row_idx + 1:].copy()
         
+        df.to_excel('Date_empty.xlsx')
         # Преобразование даты
         # df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
-        df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
+        df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y %H:%M:%S', errors='coerce').fillna(
+    pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
+)
+        # df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
         
         
         
@@ -366,10 +353,14 @@ class FileProcessor(ABC):
             + df.loc[mask].groupby('Документ').cumcount().add(1).astype(str)
         )
         
+        
+        
         # Заполнение пропусков
         df['Дата'] = df['Дата'].ffill()
         df['Документ'] = df['Документ'].infer_objects()
         df['Документ'] = df['Документ'].ffill()
+        
+        
         
         # Переименовываем пустые или NaN заголовки
         df.columns = [
@@ -377,9 +368,16 @@ class FileProcessor(ABC):
             for i, col in enumerate(df.columns)
         ]
         
+        
+        
         # Удаление пустых строк и столбцов
         df = df[df['Дата'].notna()].copy()
+        
+        # print('--------------------------------------')
+        # print(df)
         df = df.dropna(how='all').dropna(how='all', axis=1)
+        
+        
         
         return df
     

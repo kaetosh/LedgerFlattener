@@ -52,6 +52,8 @@ def main():
                 {"name": "2. Карточка счета", "value": "card"},
                 {"name": "3. Анализ счета", "value": "analisys"},
                 {"name": "4. Обороты счета", "value": "turnover"},
+                {"name": "5. ОСВ счета", "value": "accountosv"},
+                {"name": "6. ОСВ общая", "value": "generalosv"},
                 {"name": "   Выход", "value": "exit"}
             ],
             style=custom_style,  # Применяем кастомный стиль
@@ -71,14 +73,14 @@ def main():
             input_paths = ui.get_input()
             for input_path in input_paths:
                 try:
-                    
                     file_handler.handle_input(input_path, choice)
-                except Exception as e:
+                except Exception as error_description:
                     import traceback
                     traceback.print_exc()
-                    print(f"{e}  ")
+                    print(f"{error_description}  ")
                     if input_path.is_file():
-                        file_handler.not_correct_files.append(input_path.name)
+                        # file_handler.not_correct_files.append(input_path.name)
+                        file_handler.not_correct_files[input_path.name] = error_description
             
             if file_handler.storage_processed_registers:
                 file_handler._save_and_open_batch_result()
@@ -95,7 +97,7 @@ def main():
             if file_handler.not_correct_files:
                 print(Fore.RED + 'Файлы не распознаны как регистры 1С или возникли ошибки:')
                 for file_name in file_handler.not_correct_files:
-                    print(Fore.RED + f"  - {file_name}")
+                    print(Fore.RED + f"  - {file_name} - {file_handler.not_correct_files[file_name]}")
                 file_handler.not_correct_files.clear()
             
             # Очистка хранилища
@@ -107,7 +109,7 @@ def main():
         
         # Предложение продолжить
         continue_choice = questionary.select(
-            "Хотите обработать еще?",
+            "Хотите обработать еще? Вернуться к выбору регистра ctrl+c",
             choices=[
                 {"name": "Да", "value": "yes"},
                 {"name": "Нет", "value": "no"}
