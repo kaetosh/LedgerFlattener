@@ -7,6 +7,8 @@ Created on Mon Aug 25 11:23:20 2025
 
 import numpy as np
 import pandas as pd
+import threading
+import time
 
 from pathlib import Path
 from colorama import init, Fore
@@ -14,6 +16,7 @@ from colorama import init, Fore
 from register_processors.class_processor import FileProcessor, exclude_values
 from custom_errors import RegisterProcessingError
 from support_functions import fix_1c_excel_case
+
 
 init(autoreset=True)
 
@@ -150,6 +153,18 @@ class Analisys_UPPFileProcessor(FileProcessor):
                 cols[idx] = f"{dup_name}_ВАЛ"
         df.columns = cols
         
+        # Найти столбцы, заканчивающиеся на '_ВАЛ'
+        # Если выгрузка валютная, промежуточные суммирующие строки могут быть не курсивные
+        # и скипт не удалит такие строки, что приведет к ошибкам при формировании
+        # плоской таблицы. В этом случае ставим флаг того, что в случае таких ошибок
+        # скрипт попытается определить такие строки подбором значений
+        # с помощью функции find_sum_indices
+        use_find_sum_indices = False
+        columns_ending_with_VAL = df.columns[df.columns.str.endswith('_ВАЛ')]
+        
+        # Проверить, есть ли такие столбцы
+        if not columns_ending_with_VAL.empty:
+            use_find_sum_indices = True
        
         # Сохраним столбец "Вид связи КА" в отдельный фрейм
         if 'Вид связи КА за период' in df.columns and 'Счет' in df.columns:
@@ -348,11 +363,7 @@ class Analisys_UPPFileProcessor(FileProcessor):
         level_columns = [col for col in df.columns if 'Level_' in col]
         new_order = [col for col in desired_order if col in df.columns] + level_columns
         
-        #---------------------------------------------------------------------------------------------------
-        '''
-        Нужно решить проблему, когда аналитика в столбце с корр.счетами содержит промежуточные итоги, но они не курсив
-        и алгоритм их оставляет. Такие итоги пока обнаружены, если ставить прихнак Валюта
-        '''
+
         
         df = df[new_order]
         
@@ -415,64 +426,139 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         
         
-        
-        
         #---------------------------------------------------------------
-        def find_sum_indices(df, value_column='Стоимость', max_lookahead=30, tolerance=0.01):
+        # def find_sum_indices(df, value_column='Стоимость', max_lookahead=30, tolerance=0.01):
+        #     """
+        #     Быстрый алгоритм с использованием динамического программирования.
+        #     """
+        #     sum_indices = []
+        #     cost_values = df[value_column].values
+        #     indices = df.index.values
+            
+        #     for i in range(len(df)):
+        #         target_cost = cost_values[i]
+        #         target_idx = indices[i]
+                
+        #         # Ограничиваем область поиска
+        #         end = min(i + max_lookahead + 1, len(df))
+        #         next_costs = cost_values[i+1:end]
+                
+        #         # Используем множество для отслеживания достижимых сумм
+        #         possible_sums = {0}
+                
+        #         for cost in next_costs:
+        #             new_sums = set()
+        #             for s in possible_sums:
+        #                 new_sum = s + cost
+        #                 if abs(new_sum - target_cost) <= tolerance:
+        #                     sum_indices.append(target_idx)
+        #                     break
+        #                 if new_sum <= target_cost + tolerance:
+        #                     new_sums.add(new_sum)
+        #             else:
+        #                 possible_sums |= new_sums
+        #                 continue
+        #             break
+            
+        #     return sum_indices
+        
+        # Глобальный флаг для таймаута
+        timeout_flag = False
+        
+        def timeout_handler():
+            global timeout_flag
+            timeout_flag = True
+        
+        def find_sum_indices(df, value_column='Стоимость', max_lookahead=30, tolerance=0.01, max_possible_sums=100000):
             """
             Быстрый алгоритм с использованием динамического программирования.
+            Ограничение размера possible_sums и таймер для предотвращения MemoryError и долгого выполнения.
             """
+            
+            global timeout_flag
+            timeout_flag = False  # Сбрасываем флаг
+            
+            # Запускаем таймер на 2 минуты
+            timer = threading.Timer(25.0, timeout_handler)
+            timer.start()
+            
             sum_indices = []
             cost_values = df[value_column].values
             indices = df.index.values
             
-            for i in range(len(df)):
-                target_cost = cost_values[i]
-                target_idx = indices[i]
-                
-                # Ограничиваем область поиска
-                end = min(i + max_lookahead + 1, len(df))
-                next_costs = cost_values[i+1:end]
-                
-                # Используем множество для отслеживания достижимых сумм
-                possible_sums = {0}
-                
-                for cost in next_costs:
-                    new_sums = set()
-                    for s in possible_sums:
-                        new_sum = s + cost
-                        if abs(new_sum - target_cost) <= tolerance:
-                            sum_indices.append(target_idx)
-                            break
-                        if new_sum <= target_cost + tolerance:
-                            new_sums.add(new_sum)
-                    else:
-                        possible_sums |= new_sums
-                        continue
-                    break
-            
-            return sum_indices
+            try:
+                for i in range(len(df)):
+                    if timeout_flag:
+                        timer.cancel()
+                        return []  # Принудительное завершение
+                    
+                    target_cost = cost_values[i]
+                    target_idx = indices[i]
+                    
+                    # Ограничиваем область поиска
+                    end = min(i + max_lookahead + 1, len(df))
+                    next_costs = cost_values[i+1:end]
+                    
+                    # Используем множество для отслеживания достижимых сумм
+                    possible_sums = {0}
+                    
+                    for cost in next_costs:
+                        if timeout_flag:
+                            timer.cancel()
+                            
+                            return []
                         
-        merged_df.to_excel('merged_df.xlsx')
-        
-        if merged_df.loc[:, 'Разница_С_кред'].sum() !=0:
+                        # Пропускаем отрицательные стоимости, чтобы избежать бесконечного роста
+                        if cost < 0:
+                            continue
+                        
+                        new_sums = set()
+                        for s in possible_sums:
+                            new_sum = s + cost
+                            if abs(new_sum - target_cost) <= tolerance:
+                                sum_indices.append(target_idx)
+                                break
+                            # Добавляем только если сумма не превышает цель + погрешность
+                            if new_sum <= target_cost + tolerance:
+                                new_sums.add(new_sum)
+                        else:
+                            # Проверяем размер перед объединением
+                            if len(possible_sums) + len(new_sums) <= max_possible_sums:
+                                possible_sums |= new_sums
+                            # Если лимит превышен, пропускаем обновление (чтобы не расти бесконечно)
+                            continue
+                        break
+                
+                timer.cancel()  # Отменяем таймер, если функция завершилась нормально
+                return sum_indices
+            
+            except MemoryError:
+                timer.cancel()
+                return []  # Возвращаем пустой список при MemoryError
+            finally:
+                timer.cancel()  # Гарантируем отмену таймера
+                        
+
+        if merged_df.loc[:, 'Разница_С_кред'].sum() !=0 and use_find_sum_indices:
             result_list = merged_df.loc[merged_df['Разница_С_кред'] != 0, 'Кор.счет_ЧЕК'].tolist()
             # Предполагаем, что df — ваш датафрейм
             for i in result_list:
                 df_filtered = df[df['Корр_счет'].str[:2] == i]
                 ind_for_delete = find_sum_indices(df_filtered, value_column='С кред. счетов')
                 df = df.drop(ind_for_delete)
-                
-        if merged_df.loc[:, 'Разница_В_дебет'].sum() !=0:
+        
+
+        if merged_df.loc[:, 'Разница_В_дебет'].sum() !=0 and use_find_sum_indices:
             result_list = merged_df.loc[merged_df['Разница_В_дебет'] != 0, 'Кор.счет_ЧЕК'].tolist()
             # Предполагаем, что df — ваш датафрейм
             for i in result_list:
                 df_filtered = df[df['Корр_счет'].str[:2] == i]
                 ind_for_delete = find_sum_indices(df_filtered, value_column='В дебет счетов')
                 df = df.drop(ind_for_delete)
+
             
             
-            
+ 
         # Повторно
         # Векторизованное создание колонки
         df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()

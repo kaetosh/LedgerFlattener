@@ -335,7 +335,6 @@ class FileProcessor(ABC):
         df.columns = df.iloc[date_row_idx].str.strip()
         df = df.iloc[date_row_idx + 1:].copy()
         
-        df.to_excel('Date_empty.xlsx')
         # Преобразование даты
         # df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
         df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y %H:%M:%S', errors='coerce').fillna(

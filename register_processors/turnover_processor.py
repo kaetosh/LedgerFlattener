@@ -17,7 +17,8 @@ from support_functions import fix_1c_excel_case
 from register_processors.analisys_processor import accounts_without_subaccount
 
 init(autoreset=True)
-
+pd.set_option('display.max_columns', None)
+pd.set_option('display.expand_frame_repr', False)
 
 
 class Turnover_UPPFileProcessor(FileProcessor):
@@ -379,23 +380,37 @@ class Turnover_UPPFileProcessor(FileProcessor):
             )
             conditions.append(condition)
         
+        
+        
+        
+        
         # Объединяем все условия
         mask = pd.concat(conditions, axis=1).any(axis=1)
+        
+
+        
         df = df[~mask]
+
 
         # Удаляем строки, содержащие значения из списка exclude_values
         df = df[~df['Субконто'].isin(exclude_values)]
 
         df = df.rename(columns={'Счет': 'Субконто'})
         df.drop('Уровень', axis=1, inplace=True)
+        
+        
+
 
         # отберем только те строки, в которых хотя бы в одном из столбцов, определенных в existing_columns, есть непропущенные значения (не NaN)
         df = df[df[desired_order].notna().any(axis=1)]
+        
+        # print(df)
         
         if 'Показа-\nтели' in df.columns:
             df = df.drop(columns=['Показа-\nтели'])
         if 'Курсив' in df.columns:
             df = df.drop(columns=['Курсив'])
+        
         
         
         """

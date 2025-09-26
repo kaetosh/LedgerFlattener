@@ -630,14 +630,17 @@ class AccountOSV_NonUPPFileProcessor(FileProcessor):
                 df['Валюта'] = df['Счет'].shift(-1)
             for i in desired_order:
                 df[f'ВалютнаяСумма_{i}'] = df[i].shift(-2)
-            
+        
+        
+        
         # Очистим таблицу от строк с количеством и валютой
-        mask = (
-            (df['Счет'] == 'Количество') |
-            (df['Счет'] == 'Валютная сумма') |
-            (df['Счет'].str.startswith('Валюта'))
-        )
-        df = df[~mask]
+        if 'Показа-\nтели' in df.columns:
+            mask = (
+                (df['Показа-\nтели'] == 'Кол.') |
+                (df['Показа-\nтели'] == 'Вал.') |
+                (df['Показа-\nтели'].str.startswith('Валюта'))
+            )
+            df = df[~mask]
         
         '''Сохраняем данные по оборотам до обработки в таблицах'''
         

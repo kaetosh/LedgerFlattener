@@ -76,6 +76,24 @@ class Card_UPPFileProcessor(FileProcessor):
     #     df = df[df['Дата'].notna()].copy()
     #     return df.dropna(how='all', axis=0).dropna(how='all', axis=1)
     
+    def _sum_columns_between(self, df: pd.DataFrame, start_col: str, end_col: str) -> pd.Series:
+        """Суммирует значения всех столбцов между start_col и end_col"""
+        try:
+            start_idx = df.columns.get_loc(start_col)
+            end_idx = df.columns.get_loc(end_col)
+            
+            if end_idx - start_idx > 1:
+                cols_between = df.columns[start_idx + 1 : end_idx]
+                return (
+                    df[cols_between]
+                    .apply(lambda x: pd.to_numeric(x, errors='coerce').fillna(0))
+                    .sum(axis=1)
+                )
+            else:
+                return pd.Series(0, index=df.index)
+        except KeyError:
+            return pd.Series(0, index=df.index)
+    
     def _extract_special_data(
         self, 
         df: pd.DataFrame, 
@@ -89,22 +107,28 @@ class Card_UPPFileProcessor(FileProcessor):
         
         # Для количества
         if operation_filter == 'Кол-во':
-            dt_col = pd.to_numeric(filtered.iloc[:, filtered.columns.get_loc('Дебет') + 1], errors='coerce').fillna(0)
-            kt_col = pd.to_numeric(filtered.iloc[:, filtered.columns.get_loc('Кредит') + 1], errors='coerce').fillna(0)
+            # dt_col = pd.to_numeric(filtered.iloc[:, filtered.columns.get_loc('Дебет') + 1], errors='coerce').fillna(0)
+            # kt_col = pd.to_numeric(filtered.iloc[:, filtered.columns.get_loc('Кредит') + 1], errors='coerce').fillna(0)
             result = filtered[['Документ']].copy()
-            result['Дт_количество'] = dt_col
-            result['Кт_количество'] = kt_col
+            # result['Дт_количество'] = dt_col
+            # result['Кт_количество'] = kt_col
+            result['Дт_количество'] = self._sum_columns_between(filtered, 'Дебет', 'Кредит')
+            result['Кт_количество'] = self._sum_columns_between(filtered, 'Кредит', 'Текущее сальдо')
             return result, df[df['Операция'] != operation_filter]
         
         # Для валюты
         filtered.replace([np.nan, '\n', '\t', ' '], '', inplace=True)
         filtered.replace(r'^\s+$', '', inplace=True, regex=True)
-        
+
         result = filtered[['Документ']].copy()
+        
         result['Дт_валюта'] = filtered['Дебет']
-        result['Дт_валютая_сумма'] = filtered.iloc[:, filtered.columns.get_loc('Дебет') + 1]
+        
+        # result['Дт_валютая_сумма'] = filtered.iloc[:, filtered.columns.get_loc('Дебет') + 1]
+        result['Дт_валютая_сумма'] = self._sum_columns_between(filtered, 'Дебет', 'Кредит')
         result['Кт_валюта'] = filtered['Кредит']
-        result['Кт_валютая_сумма'] = filtered.iloc[:, filtered.columns.get_loc('Кредит') + 1]
+        # result['Кт_валютая_сумма'] = filtered.iloc[:, filtered.columns.get_loc('Кредит') + 1]
+        result['Кт_валютая_сумма'] = self._sum_columns_between(filtered, 'Кредит', 'Текущее сальдо')
         
         return result, df[df['Операция'] != operation_filter]
     
@@ -116,7 +140,10 @@ class Card_UPPFileProcessor(FileProcessor):
         
         # Извлечение данных по количеству и валюте
         df_count, df = self._extract_special_data(df, 'Кол-во', ['Документ', 'Дт_количество', 'Кт_количество'])
+        
+        
         df_currency, df = self._extract_special_data(df, 'В валюте :', ['Документ', 'Дт_валюта', 'Дт_валютая_сумма', 'Кт_валюта', 'Кт_валютая_сумма'])
+        
                    
         if df.empty:
             raise RegisterProcessingError(Fore.RED + f"Карточка 1с пустая в файле {file_path.name}, обработка невозможна.\n")

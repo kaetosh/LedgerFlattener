@@ -4,13 +4,17 @@ from colorama import init, Fore, Style
 from typing import List
 from pathlib import Path
 import shlex
+import pandas as pd
 
 from file_handler import FileHandler
 from support_functions import (print_instruction_color,
                                validate_paths,
                                clear_console,
                                print_start_text)
-
+pd.set_option('display.max_columns', None)  # Показывать все столбцы
+pd.set_option('display.expand_frame_repr', False)  # Не переносить на несколько строк
+pd.set_option('display.width', None)  # Не ограничивать ширину вывода
+pd.set_option('display.max_colwidth', None)  # Показывать полное содержимое ячеек
 
 # Инициализация colorama для цветного вывода
 init(autoreset=True)
@@ -75,8 +79,8 @@ def main():
                 try:
                     file_handler.handle_input(input_path, choice)
                 except Exception as error_description:
-                    import traceback
-                    traceback.print_exc()
+                    # import traceback
+                    # traceback.print_exc()
                     print(f"{error_description}  ")
                     if input_path.is_file():
                         # file_handler.not_correct_files.append(input_path.name)
@@ -89,11 +93,12 @@ def main():
             # break
             continue
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            # import traceback
+            # traceback.print_exc()
             print(f"{e}")
         finally:
             # Вывод информации о неправильных файлах
+            # file_handler.print_processing_summary()
             if file_handler.not_correct_files:
                 print(Fore.RED + 'Файлы не распознаны как регистры 1С или возникли ошибки:')
                 for file_name in file_handler.not_correct_files:
@@ -126,3 +131,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # The End
