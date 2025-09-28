@@ -30,6 +30,7 @@ class UserInterface:
 def main():
 
     ui = UserInterface()
+    # file_handler = FileHandler(max_workers=1)
     file_handler = FileHandler()
     
     # Создаем кастомный стиль
