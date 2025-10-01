@@ -7,8 +7,7 @@ Created on Mon Aug 25 11:23:20 2025
 
 import numpy as np
 import pandas as pd
-import threading
-import time
+
 
 from pathlib import Path
 from colorama import init, Fore
@@ -29,7 +28,100 @@ class Analisys_UPPFileProcessor(FileProcessor):
     def __init__(self):
         super().__init__()
         self.df_type_connection = pd.DataFrame()  # хранение данных анализа счета с полем Вид связи КА за период
+        self.used_indices = set() # Множество для отслеживания использованных индексов
+    
+    # @staticmethod
+    def find_sum_indices(self, df, column_name, tolerance=0.02):
+        """
+        Находит индексы значений, для которых можно подобрать сумму из следующих НЕИСПОЛЬЗОВАННЫХ значений.
         
+        Parameters:
+        df (pd.DataFrame): Входной DataFrame
+        column_name (str): Имя столбца для анализа
+        tolerance (float): Допустимая погрешность для сравнения сумм
+        
+        Returns:
+        list: Список индексов, для которых найдена подходящая сумма
+        """
+        result_indices = []
+        
+        # Преобразуем столбец в массив, фильтруя NaN значения
+        values = df[column_name].dropna().values
+        indices = df[column_name].dropna().index
+        
+        # Множество для отслеживания использованных индексов
+        # used_indices = set()
+        
+        # Проходим по всем значениям
+        for i in range(len(values)):
+            current_index = indices[i]
+            
+            # Пропускаем уже использованные индексы
+            if current_index in self.used_indices:
+                continue
+                
+            target_value = values[i]
+            current_sum = 0.0
+            temp_used_indices = []  # Временное хранилище для потенциально используемых индексов
+            
+            # Проходим по всем следующим значениям
+            for j in range(i + 1, len(values)):
+                next_index = indices[j]
+                
+                # Пропускаем уже использованные индексы
+                if next_index in self.used_indices:
+                    continue
+                    
+                current_sum += values[j]
+                temp_used_indices.append(next_index)
+                
+                # Проверяем, попадает ли сумма в диапазон с учетом погрешности
+                if abs(current_sum - target_value) <= tolerance:
+                    result_indices.append(current_index)
+                    # Добавляем все использованные в этой сумме индексы в used_indices
+                    self.used_indices.update(temp_used_indices)
+                    break
+                # Если сумма превысила целевое значение с запасом, выходим
+                elif current_sum > target_value + tolerance:
+                    break
+        self.used_indices.clear()
+        return result_indices
+    # def _find_sum_indices(df, column_name, tolerance=0.02):
+    #     """
+    #     Находит индексы значений, для которых можно подобрать сумму из следующих значений.
+        
+    #     Parameters:
+    #     df (pd.DataFrame): Входной DataFrame
+    #     column_name (str): Имя столбца для анализа
+    #     tolerance (float): Допустимая погрешность для сравнения сумм
+        
+    #     Returns:
+    #     list: Список индексов, для которых найдена подходящая сумма
+    #     """
+    #     result_indices = []
+        
+    #     # Преобразуем столбец в массив, фильтруя NaN значения
+    #     values = df[column_name].dropna().values
+    #     indices = df[column_name].dropna().index
+        
+    #     # Проходим по всем значениям кроме последнего
+    #     for i in range(len(values) - 1):
+    #         target_value = values[i]
+    #         current_sum = 0.0
+            
+    #         # Проходим по всем следующим значениям
+    #         for j in range(i + 1, len(values)):
+    #             current_sum += values[j]
+                
+    #             # Проверяем, попадает ли сумма в диапазон с учетом погрешности
+    #             if abs(current_sum - target_value) <= tolerance:
+    #                 result_indices.append(indices[i])
+    #                 break
+    #             # Если сумма превысила целевое значение с запасом, выходим
+    #             elif current_sum > target_value + tolerance:
+    #                 break
+        
+    #     return result_indices
     
     @staticmethod
     def _process_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
@@ -381,180 +473,144 @@ class Analisys_UPPFileProcessor(FileProcessor):
         '''Подбиваем обороты в разрезе корр. субсчетов и считаем разницы с оборотами до обработки'''
         
         df_for_check = self.table_for_check
-
-        # Векторизованное создание колонки
-        df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()
-        corr_schet = df_for_check_2['Корр_счет'].astype(str)
-        df_for_check_2['Кор.счет_ЧЕК'] = np.where(
-            (corr_schet.str.len() >= 2) & (corr_schet != '000'),
-            corr_schet.str[:2],
-            corr_schet
-        )
-        
-        # Группировка
-        df_for_check_2 = df_for_check_2.groupby('Кор.счет_ЧЕК', as_index=False).agg({
-            'С кред. счетов': 'sum',
-            'В дебет счетов': 'sum'
-        })
-        
-
-        # Объединяем DataFrame
-        merged_df = df_for_check.merge(
-            df_for_check_2, 
-            on='Кор.счет_ЧЕК', 
-            how='outer',
-            suffixes=('_df_for_check', '_df_for_check_2')
-        )
-        
-        # Заполняем пропуски нулями
-        merged_df = merged_df.fillna(0)
-        
-        # Приводим столбцы к числовому типу
-        merged_df['С кред. счетов_df_for_check'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check'], errors='coerce').fillna(0)
-        merged_df['В дебет счетов_df_for_check'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check'], errors='coerce').fillna(0)
-        merged_df['С кред. счетов_df_for_check_2'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check_2'], errors='coerce').fillna(0)
-        merged_df['В дебет счетов_df_for_check_2'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check_2'], errors='coerce').fillna(0)
-        
-        # Вычисляем разницы
-        merged_df['Разница_С_кред'] = (merged_df['С кред. счетов_df_for_check'] - 
-                                        merged_df['С кред. счетов_df_for_check_2']).round()
-        merged_df['Разница_В_дебет'] = (merged_df['В дебет счетов_df_for_check'] - 
-                                         merged_df['В дебет счетов_df_for_check_2']).round()
-        
-        # Добавляем информацию о файле
-        merged_df['Исх.файл'] = self.file
         
         
-        
-        #---------------------------------------------------------------
-        # def find_sum_indices(df, value_column='Стоимость', max_lookahead=30, tolerance=0.01):
-        #     """
-        #     Быстрый алгоритм с использованием динамического программирования.
-        #     """
-        #     sum_indices = []
-        #     cost_values = df[value_column].values
-        #     indices = df.index.values
+        for _ in range(4):
+            # Векторизованное создание колонки
+            df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()
+            corr_schet = df_for_check_2['Корр_счет'].astype(str)
             
-        #     for i in range(len(df)):
-        #         target_cost = cost_values[i]
-        #         target_idx = indices[i]
+            # Создаем колонку Кор.счет_ЧЕК более эффективно
+            mask = (corr_schet.str.len() >= 2) & (corr_schet != '000')
+            df_for_check_2['Кор.счет_ЧЕК'] = corr_schet.where(~mask, corr_schet.str[:2])
+            
+            # Группировка
+            df_for_check_2 = df_for_check_2.groupby('Кор.счет_ЧЕК', as_index=False).agg({
+                'С кред. счетов': 'sum',
+                'В дебет счетов': 'sum'
+            })
+            
+            # Объединяем и обрабатываем данные
+            merged_df = df_for_check.merge(
+                df_for_check_2, 
+                on='Кор.счет_ЧЕК', 
+                how='outer',
+                suffixes=('_base', '_current')
+            ).fillna(0)
+            
+            # Приводим столбцы к числовому типу более эффективно
+            numeric_cols = ['С кред. счетов_base', 'В дебет счетов_base', 
+                           'С кред. счетов_current', 'В дебет счетов_current']
+            merged_df[numeric_cols] = merged_df[numeric_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
+            
+            # Вычисляем разницы
+            merged_df['Разница_С_кред'] = (merged_df['С кред. счетов_base'] - 
+                                            merged_df['С кред. счетов_current']).round()
+            merged_df['Разница_В_дебет'] = (merged_df['В дебет счетов_base'] - 
+                                             merged_df['В дебет счетов_current']).round()
+            
+            # Добавляем информацию о файле
+            merged_df['Исх.файл'] = self.file
+            
+            # Объединенная обработка для кредита и дебета
+            if use_find_sum_indices:
+                indices_to_remove = set()
                 
-        #         # Ограничиваем область поиска
-        #         end = min(i + max_lookahead + 1, len(df))
-        #         next_costs = cost_values[i+1:end]
-                
-        #         # Используем множество для отслеживания достижимых сумм
-        #         possible_sums = {0}
-                
-        #         for cost in next_costs:
-        #             new_sums = set()
-        #             for s in possible_sums:
-        #                 new_sum = s + cost
-        #                 if abs(new_sum - target_cost) <= tolerance:
-        #                     sum_indices.append(target_idx)
-        #                     break
-        #                 if new_sum <= target_cost + tolerance:
-        #                     new_sums.add(new_sum)
-        #             else:
-        #                 possible_sums |= new_sums
-        #                 continue
-        #             break
-            
-        #     return sum_indices
-        
-        # Глобальный флаг для таймаута
-        timeout_flag = False
-        
-        def timeout_handler():
-            global timeout_flag
-            timeout_flag = True
-        
-        def find_sum_indices(df, value_column='Стоимость', max_lookahead=30, tolerance=0.01, max_possible_sums=100000):
-            """
-            Быстрый алгоритм с использованием динамического программирования.
-            Ограничение размера possible_sums и таймер для предотвращения MemoryError и долгого выполнения.
-            """
-            
-            global timeout_flag
-            timeout_flag = False  # Сбрасываем флаг
-            
-            # Запускаем таймер на 2 минуты
-            timer = threading.Timer(25.0, timeout_handler)
-            timer.start()
-            
-            sum_indices = []
-            cost_values = df[value_column].values
-            indices = df.index.values
-            
-            try:
-                for i in range(len(df)):
-                    if timeout_flag:
-                        timer.cancel()
-                        return []  # Принудительное завершение
+                # Обрабатываем оба типа расхождений в одном цикле
+                for diff_col, data_col in [('Разница_С_кред', 'С кред. счетов'), 
+                                          ('Разница_В_дебет', 'В дебет счетов')]:
                     
-                    target_cost = cost_values[i]
-                    target_idx = indices[i]
-                    
-                    # Ограничиваем область поиска
-                    end = min(i + max_lookahead + 1, len(df))
-                    next_costs = cost_values[i+1:end]
-                    
-                    # Используем множество для отслеживания достижимых сумм
-                    possible_sums = {0}
-                    
-                    for cost in next_costs:
-                        if timeout_flag:
-                            timer.cancel()
+                    if merged_df[diff_col].sum() != 0:
+                        problem_accounts = merged_df.loc[merged_df[diff_col] != 0, 'Кор.счет_ЧЕК'].tolist()
+                        
+                        for account_prefix in problem_accounts:
+                            # Находим все уникальные корр_счета с данным префиксом
+                            mask = df['Корр_счет'].astype(str).str.startswith(account_prefix)
+                            unique_corr_accounts = df.loc[mask, 'Корр_счет'].unique()
                             
-                            return []
-                        
-                        # Пропускаем отрицательные стоимости, чтобы избежать бесконечного роста
-                        if cost < 0:
-                            continue
-                        
-                        new_sums = set()
-                        for s in possible_sums:
-                            new_sum = s + cost
-                            if abs(new_sum - target_cost) <= tolerance:
-                                sum_indices.append(target_idx)
-                                break
-                            # Добавляем только если сумма не превышает цель + погрешность
-                            if new_sum <= target_cost + tolerance:
-                                new_sums.add(new_sum)
-                        else:
-                            # Проверяем размер перед объединением
-                            if len(possible_sums) + len(new_sums) <= max_possible_sums:
-                                possible_sums |= new_sums
-                            # Если лимит превышен, пропускаем обновление (чтобы не расти бесконечно)
-                            continue
-                        break
+                            for corr_account in unique_corr_accounts:
+                                # Фильтруем и находим индексы для удаления
+                                filtered_df = df[(df['Корр_счет'] == corr_account) & 
+                                               (df['Субконто_корр_счета'] != "Не расшифровано")]
+                                
+                                indices_to_remove.update(self.find_sum_indices(filtered_df, data_col))
                 
-                timer.cancel()  # Отменяем таймер, если функция завершилась нормально
-                return sum_indices
-            
-            except MemoryError:
-                timer.cancel()
-                return []  # Возвращаем пустой список при MemoryError
-            finally:
-                timer.cancel()  # Гарантируем отмену таймера
-                        
-
-        if merged_df.loc[:, 'Разница_С_кред'].sum() !=0 and use_find_sum_indices:
-            result_list = merged_df.loc[merged_df['Разница_С_кред'] != 0, 'Кор.счет_ЧЕК'].tolist()
-            # Предполагаем, что df — ваш датафрейм
-            for i in result_list:
-                df_filtered = df[df['Корр_счет'].str[:2] == i]
-                ind_for_delete = find_sum_indices(df_filtered, value_column='С кред. счетов')
-                df = df.drop(ind_for_delete)
+                # Удаляем все найденные индексы за один раз
+                if indices_to_remove:
+                    df = df.drop(indices_to_remove)
         
+        # for opo in range(3):
 
-        if merged_df.loc[:, 'Разница_В_дебет'].sum() !=0 and use_find_sum_indices:
-            result_list = merged_df.loc[merged_df['Разница_В_дебет'] != 0, 'Кор.счет_ЧЕК'].tolist()
-            # Предполагаем, что df — ваш датафрейм
-            for i in result_list:
-                df_filtered = df[df['Корр_счет'].str[:2] == i]
-                ind_for_delete = find_sum_indices(df_filtered, value_column='В дебет счетов')
-                df = df.drop(ind_for_delete)
+        #     # Векторизованное создание колонки
+        #     df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()
+        #     corr_schet = df_for_check_2['Корр_счет'].astype(str)
+        #     df_for_check_2['Кор.счет_ЧЕК'] = np.where(
+        #         (corr_schet.str.len() >= 2) & (corr_schet != '000'),
+        #         corr_schet.str[:2],
+        #         corr_schet
+        #     )
+            
+        #     # Группировка
+        #     df_for_check_2 = df_for_check_2.groupby('Кор.счет_ЧЕК', as_index=False).agg({
+        #         'С кред. счетов': 'sum',
+        #         'В дебет счетов': 'sum'
+        #     })
+            
+    
+        #     # Объединяем DataFrame
+        #     merged_df = df_for_check.merge(
+        #         df_for_check_2, 
+        #         on='Кор.счет_ЧЕК', 
+        #         how='outer',
+        #         suffixes=('_df_for_check', '_df_for_check_2')
+        #     )
+            
+        #     # Заполняем пропуски нулями
+        #     merged_df = merged_df.fillna(0)
+            
+        #     # Приводим столбцы к числовому типу
+        #     merged_df['С кред. счетов_df_for_check'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check'], errors='coerce').fillna(0)
+        #     merged_df['В дебет счетов_df_for_check'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check'], errors='coerce').fillna(0)
+        #     merged_df['С кред. счетов_df_for_check_2'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check_2'], errors='coerce').fillna(0)
+        #     merged_df['В дебет счетов_df_for_check_2'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check_2'], errors='coerce').fillna(0)
+            
+        #     # Вычисляем разницы
+        #     merged_df['Разница_С_кред'] = (merged_df['С кред. счетов_df_for_check'] - 
+        #                                     merged_df['С кред. счетов_df_for_check_2']).round()
+        #     merged_df['Разница_В_дебет'] = (merged_df['В дебет счетов_df_for_check'] - 
+        #                                      merged_df['В дебет счетов_df_for_check_2']).round()
+            
+        #     # Добавляем информацию о файле
+        #     merged_df['Исх.файл'] = self.file
+            
+            
+            
+        #     if merged_df.loc[:, 'Разница_С_кред'].sum() !=0 and use_find_sum_indices:
+        #         result_list = merged_df.loc[merged_df['Разница_С_кред'] != 0, 'Кор.счет_ЧЕК'].tolist()
+        #         # Предполагаем, что df — ваш датафрейм
+        #         for i in result_list:
+        #             # df_filtered = df[df['Корр_счет'].str[:2] == i]
+        #             mask = df['Корр_счет'].astype(str).str.startswith(i)
+        #             unique_values = df.loc[mask, 'Корр_счет'].unique().tolist()
+        #             for j in unique_values:
+        #             # if j=='10.05':
+        #                 df_filtered = df[(df['Корр_счет'] == j) & (df['Субконто_корр_счета'] != "Не расшифровано")]
+        #                 ind_for_delete = self.find_sum_indices(df_filtered, 'С кред. счетов')
+        #                 df = df.drop(ind_for_delete)
+            
+    
+        #     if merged_df.loc[:, 'Разница_В_дебет'].sum() !=0 and use_find_sum_indices:
+        #         result_list = merged_df.loc[merged_df['Разница_В_дебет'] != 0, 'Кор.счет_ЧЕК'].tolist()
+        #         # Предполагаем, что df — ваш датафрейм
+        #         for i in result_list:
+        #             # df_filtered = df[df['Корр_счет'].str[:2] == i]
+        #             mask = df['Корр_счет'].astype(str).str.startswith(i)
+        #             unique_values = df.loc[mask, 'Корр_счет'].unique().tolist()
+        #             for j in unique_values:
+        #                 # if j=='10.05':
+        #                 df_filtered = df[(df['Корр_счет'] == j) & (df['Субконто_корр_счета'] != "Не расшифровано")]
+        #                 ind_for_delete = self.find_sum_indices(df_filtered, 'В дебет счетов')
+        #                 df = df.drop(ind_for_delete)
 
             
             
