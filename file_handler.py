@@ -650,7 +650,7 @@ class FileHandler:
         try:
             # Используем tqdm как спиннер с отображением времени
             with tqdm(total=None, desc="Файл в обработке", ascii=True, 
-                     bar_format='{desc}: {elapsed}',  disable=True) as pbar:
+                     bar_format='{desc}: {elapsed}', disable=True) as pbar:
                 with Pool(processes=1) as pool:
                     # Запускаем обработку в отдельном процессе
                     async_result = pool.apply_async(self._process_wrapper, 
