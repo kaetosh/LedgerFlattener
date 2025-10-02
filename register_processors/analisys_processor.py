@@ -743,6 +743,7 @@ class Analisys_UPPFileProcessor(FileProcessor):
                                                                                          diff_col,
                                                                                          data_col,
                                                                                          corr_account)
+                                     indices_to_remove.clear()
                                     if final_ind_to_remove:
                                         df = df.drop(final_ind_to_remove, errors='ignore')
         
@@ -1172,4 +1173,5 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         if col_with_subacc:
             df['Субсчет'] = df.loc[:, col_with_subacc]
         
+
         return df, self.table_for_check
