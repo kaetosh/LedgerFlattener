@@ -609,7 +609,7 @@ class Analisys_UPPFileProcessor(FileProcessor):
                 
                 if corr_account == '10.05':
                     print('-----------------------------')
-                    print('temp_to_remove', temp_to_remove)
+                    # print('temp_to_remove', temp_to_remove)
 
                 # Удаляем строки и обрабатываем данные
                 df_after_changes = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].drop(temp_to_remove, errors='ignore').copy()
@@ -652,15 +652,22 @@ class Analisys_UPPFileProcessor(FileProcessor):
                 current_general_deviation = abs(merged_df[diff_col].sum())
                 
                 if corr_account == '10.05':
-                    merged_df.to_excel(f'merged_df_{ind_del}.xlsx')
+                    print('Посчитали отклонение:')
                     print('current_general_deviation = ', current_general_deviation)
+                    # print('обновили indices_to_remove = ', indices_to_remove)
+                    print('last_general_deviation = ', last_general_deviation)
                 
                 if current_general_deviation <= last_general_deviation:
                     last_general_deviation = current_general_deviation
                     indices_to_remove.add(ind_del)
                     if corr_account == '10.05':
-                        print('обновили indices_to_remove = ', indices_to_remove)
+                        print('Ага, current_general_deviation <= last_general_deviation, т.е. ошибка уменьшилась')
+                        print('обновили indices_to_remove, добавили = ', ind_del)
                         print('новый last_general_deviation = ', last_general_deviation)
+                if 0<=last_general_deviation<=1:
+                    if corr_account == '10.05':
+                        print('Ага, last_general_deviation близок к нулю, больше не проверяем!')
+                    break
             if corr_account == '10.05':
                 print('ИТОГОВЫЙ indices_to_remove', indices_to_remove)
             print(f'Количество удаляемых строк уменьшилос на {len(ind_del_list) - len(indices_to_remove)}')
@@ -729,12 +736,13 @@ class Analisys_UPPFileProcessor(FileProcessor):
                                                (df['Субконто_корр_счета'] != "Не расшифровано")]
                                 
                                 indices_to_remove.update(self.find_sum_indices(filtered_df, data_col))
-                
-                                last_general_deviation = abs(merged_df[diff_col].sum())
+                                
                                 if corr_account == '10.05':
-                                    merged_df.to_excel('Отклонен10.05.xlsx')
-                                    df_for_check.to_excel('df_for_check10.05.xlsx')
-                                    df_for_check_2.to_excel('df_for_check210.05.xlsx')
+                                    print(merged_df)
+                
+                                last_general_deviation = abs(merged_df.loc[merged_df['Кор.счет_ЧЕК'] == corr_account, diff_col].sum())
+                                if corr_account == '10.05':
+                                    print('Отклонение по 1015 ====', last_general_deviation)
                                 if indices_to_remove:
                                     final_ind_to_remove = reconciliation_interim_results(df,
                                                                                          indices_to_remove,
@@ -743,7 +751,7 @@ class Analisys_UPPFileProcessor(FileProcessor):
                                                                                          diff_col,
                                                                                          data_col,
                                                                                          corr_account)
-                                     indices_to_remove.clear()
+                                    indices_to_remove.clear()
                                     if final_ind_to_remove:
                                         df = df.drop(final_ind_to_remove, errors='ignore')
         
@@ -1173,5 +1181,4 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         if col_with_subacc:
             df['Субсчет'] = df.loc[:, col_with_subacc]
         
-
         return df, self.table_for_check
