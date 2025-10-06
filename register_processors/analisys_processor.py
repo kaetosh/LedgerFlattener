@@ -340,6 +340,8 @@ class Analisys_UPPFileProcessor(FileProcessor):
         valid_mask = self._is_accounting_code_vectorized(df_for_check['Кор.счет']) | (df_for_check['Кор.счет'].astype(str) == "0")
         df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет'].astype(str).where(valid_mask)
         
+        
+        
         # Удаление NaN и заполнение пустыми строками
         df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет_ЧЕК'].dropna().fillna('')
         
@@ -347,14 +349,24 @@ class Analisys_UPPFileProcessor(FileProcessor):
         df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет_ЧЕК'].str.zfill(2)
         
         #----------------------------------------------------------------------------
+
         # Фильтрация
         if '94.Н' in df_for_check['Кор.счет_ЧЕК'].values:
+            # Создаем регулярное выражение для поиска значений, начинающихся на "94." и имеющих 2 символа после точки
+            pattern = r'^94\..{2}$'
+            
+            # Фильтруем данные
             df_for_check = df_for_check[
-                (df_for_check['Кор.счет_ЧЕК'] == '94.Н') | ~df_for_check['Кор.счет_ЧЕК'].isin(['94'])
+                (df_for_check['Кор.счет_ЧЕК'] == '94.Н') | 
+                ~(
+                    df_for_check['Кор.счет_ЧЕК'].isin(['94']) |  # Точное значение "94"
+                    df_for_check['Кор.счет_ЧЕК'].str.match(pattern, na=False)  # Значения по шаблону "94.XX"
+                )
             ]
         else:
             # Удаляем строки с NaN перед фильтрацией
             df_for_check = df_for_check[df_for_check['Кор.счет_ЧЕК'].notna()]
+
         
         
         #--------------------------------------------------------------------------------------
@@ -371,7 +383,10 @@ class Analisys_UPPFileProcessor(FileProcessor):
         #     df_for_check = df_for_check[df_for_check['Кор.счет_ЧЕК'].notna() & df_for_check['Кор.счет_ЧЕК'].str.match(r'^(\d{2}|000)$')]
         
         # Замена '94.Н' на '94'
-        df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет_ЧЕК'].replace('94.Н', '94')
+        
+        # df_for_check.to_excel('df_for_check.xlsx')
+        
+        # df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет_ЧЕК'].replace('94.Н', '94')
         
         # Группировка и сброс индекса
         df_for_check = df_for_check.groupby('Кор.счет_ЧЕК')[['С кред. счетов', 'В дебет счетов']].sum().reset_index()
@@ -385,7 +400,19 @@ class Analisys_UPPFileProcessor(FileProcessor):
         clean_acc = [i for i in all_acc_dict if all_acc_dict[i] == 1 and i not in acc_with_sub]
         
         del_acc = set(all_acc_dict.keys()) - set(clean_acc)
+        
+        # Удаление субсчетов для счетов без субсчетов
+        for i in accounts_without_subaccount:
+            unwanted_subaccounts = [n for n in all_acc_dict if i in n and n != i]
+            del_acc.update(unwanted_subaccounts)
+        
+        # Удаление счетов из accounts_without_subaccount из del_acc
+        del_acc.difference_update(accounts_without_subaccount)
+        
         df_for_check = df_for_check[~df_for_check['Кор.счет_ЧЕК'].isin(del_acc)].copy()
+        
+        
+        
         
         #------------------------------------------
         # Сохраним для дальнейшего использования
@@ -596,28 +623,17 @@ class Analisys_UPPFileProcessor(FileProcessor):
                                            data_col,
                                            corr_account) -> set:
             indices_to_remove = set()
-            # for diff_col, data_col in [('Разница_С_кред', 'С кред. счетов'), 
-            #                           ('Разница_В_дебет', 'В дебет счетов')]
+
             # Преобразуем в список и сортируем для детерминированного порядка
             sorted_ind_del_list = sorted(ind_del_list)
-            if corr_account == '10.05':
-                print('Начальное отклонение = ', last_general_deviation)
-                print('исходные индексы для удаления = ', sorted_ind_del_list)
+
             for ind_del in sorted_ind_del_list:
                 # Создаем временный набор с потенциально новым индексом
                 temp_to_remove = indices_to_remove | {ind_del}
-                
-                if corr_account == '10.05':
-                    print('-----------------------------')
-                    # print('temp_to_remove', temp_to_remove)
 
                 # Удаляем строки и обрабатываем данные
                 df_after_changes = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].drop(temp_to_remove, errors='ignore').copy()
-                
-                # corr_schet = df_after_changes['Корр_счет'].astype(str)
-                # mask = (corr_schet.str.len() >= 2) & (corr_schet != '000')
-                
-                
+
                 df_after_changes['Кор.счет_ЧЕК'] = df_after_changes.loc[:, 'Корр_счет']
 
                 # Группировка
@@ -626,9 +642,6 @@ class Analisys_UPPFileProcessor(FileProcessor):
                     'В дебет счетов': 'sum'
                 })
                 
-                # if corr_account == '10.05':
-                #     df_after_changes.to_excel(f'df_after_changes_{ind_del}.xlsx')
-                
                 # Объединяем и обрабатываем данные
                 merged_df = df_before_changes[df_before_changes['Кор.счет_ЧЕК']==corr_account].merge(
                     df_after_changes[df_after_changes['Кор.счет_ЧЕК']==corr_account], 
@@ -636,9 +649,7 @@ class Analisys_UPPFileProcessor(FileProcessor):
                     how='outer',
                     suffixes=('_base', '_current')
                 ).fillna(0)
-                
-                
-                
+
                 
                 # Приводим столбцы к числовому типу
                 numeric_cols = ['С кред. счетов_base', 'В дебет счетов_base', 
@@ -651,39 +662,17 @@ class Analisys_UPPFileProcessor(FileProcessor):
                 
                 current_general_deviation = abs(merged_df[diff_col].sum())
                 
-                if corr_account == '10.05':
-                    print('Посчитали отклонение:')
-                    print('current_general_deviation = ', current_general_deviation)
-                    # print('обновили indices_to_remove = ', indices_to_remove)
-                    print('last_general_deviation = ', last_general_deviation)
-                
                 if current_general_deviation <= last_general_deviation:
                     last_general_deviation = current_general_deviation
                     indices_to_remove.add(ind_del)
-                    if corr_account == '10.05':
-                        print('Ага, current_general_deviation <= last_general_deviation, т.е. ошибка уменьшилась')
-                        print('обновили indices_to_remove, добавили = ', ind_del)
-                        print('новый last_general_deviation = ', last_general_deviation)
+
                 if 0<=last_general_deviation<=1:
-                    if corr_account == '10.05':
-                        print('Ага, last_general_deviation близок к нулю, больше не проверяем!')
                     break
-            if corr_account == '10.05':
-                print('ИТОГОВЫЙ indices_to_remove', indices_to_remove)
-            print(f'Количество удаляемых строк уменьшилос на {len(ind_del_list) - len(indices_to_remove)}')
             return indices_to_remove
             
-            
-        df.to_excel('Исходник до чистки.xlsx')
-        df_for_check.to_excel('df_for_check до чистки.xlsx')
         for _ in range(3):
             # Векторизованное создание колонки
             df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()
-            # corr_schet = df_for_check_2['Корр_счет'].astype(str)
-            
-            # Создаем колонку Кор.счет_ЧЕК более эффективно
-            # mask = (corr_schet.str.len() >= 2) & (corr_schet != '000')
-            # df_for_check_2['Кор.счет_ЧЕК'] = corr_schet.where(~mask, corr_schet.str[:2])
             df_for_check_2['Кор.счет_ЧЕК'] = df_for_check_2.loc[:,'Корр_счет']
             
             # Группировка
@@ -737,12 +726,9 @@ class Analisys_UPPFileProcessor(FileProcessor):
                                 
                                 indices_to_remove.update(self.find_sum_indices(filtered_df, data_col))
                                 
-                                if corr_account == '10.05':
-                                    print(merged_df)
                 
                                 last_general_deviation = abs(merged_df.loc[merged_df['Кор.счет_ЧЕК'] == corr_account, diff_col].sum())
-                                if corr_account == '10.05':
-                                    print('Отклонение по 1015 ====', last_general_deviation)
+
                                 if indices_to_remove:
                                     final_ind_to_remove = reconciliation_interim_results(df,
                                                                                          indices_to_remove,
@@ -755,11 +741,6 @@ class Analisys_UPPFileProcessor(FileProcessor):
                                     if final_ind_to_remove:
                                         df = df.drop(final_ind_to_remove, errors='ignore')
         
-    
-        
-        
-        
-        df.to_excel('Исходник ПОСЛЕ чистки.xlsx')
         #---------------------------------------------------------------
         # Сохраняем результат
         self.table_for_check = merged_df
@@ -775,8 +756,6 @@ class Analisys_UPPFileProcessor(FileProcessor):
         
         if col_with_subacc:
             df['Субсчет'] = df.loc[:, col_with_subacc]
-        
-        
         
         return df, self.table_for_check
 
@@ -978,22 +957,58 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
         # Векторизированное добавление '0' к односимвольным значениям
         df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет_ЧЕК'].str.zfill(2)
         
+        
+        #----------------------------------------------------------------------------
         # Фильтрация
         if '94.Н' in df_for_check['Кор.счет_ЧЕК'].values:
             df_for_check = df_for_check[
-                (df_for_check['Кор.счет_ЧЕК'] == '94.Н') |
-                (df_for_check['Кор.счет_ЧЕК'].str.match(r'^\d{2}$') &
-                 ~df_for_check['Кор.счет_ЧЕК'].isin(['94']))
+                (df_for_check['Кор.счет_ЧЕК'] == '94.Н') | ~df_for_check['Кор.счет_ЧЕК'].isin(['94'])
             ]
         else:
             # Удаляем строки с NaN перед фильтрацией
-            df_for_check = df_for_check[df_for_check['Кор.счет_ЧЕК'].notna() & df_for_check['Кор.счет_ЧЕК'].str.match(r'^(\d{2}|000)$')]
+            df_for_check = df_for_check[df_for_check['Кор.счет_ЧЕК'].notna()]
+        
+        
+        #--------------------------------------------------------------------------------------
+        
+        
+        # Фильтрация
+        # if '94.Н' in df_for_check['Кор.счет_ЧЕК'].values:
+        #     df_for_check = df_for_check[
+        #         (df_for_check['Кор.счет_ЧЕК'] == '94.Н') |
+        #         (df_for_check['Кор.счет_ЧЕК'].str.match(r'^\d{2}$') &
+        #          ~df_for_check['Кор.счет_ЧЕК'].isin(['94']))
+        #     ]
+        # else:
+        #     # Удаляем строки с NaN перед фильтрацией
+        #     df_for_check = df_for_check[df_for_check['Кор.счет_ЧЕК'].notna() & df_for_check['Кор.счет_ЧЕК'].str.match(r'^(\d{2}|000)$')]
         
         # Замена '94.Н' на '94'
         df_for_check['Кор.счет_ЧЕК'] = df_for_check['Кор.счет_ЧЕК'].replace('94.Н', '94')
         
         # Группировка и сброс индекса
         df_for_check = df_for_check.groupby('Кор.счет_ЧЕК')[['Дебет', 'Кредит']].sum().reset_index()
+        
+        
+        #------------------------------------------
+        # Счета с субсчетами
+        all_acc_dict = df_for_check['Кор.счет_ЧЕК'].value_counts().to_dict()
+        acc_with_sub = [i for i in all_acc_dict if self._is_parent(i, list(all_acc_dict.keys()))]
+        
+        clean_acc = [i for i in all_acc_dict if all_acc_dict[i] == 1 and i not in acc_with_sub]
+        
+        del_acc = set(all_acc_dict.keys()) - set(clean_acc)
+        
+        # Удаление субсчетов для счетов без субсчетов
+        for i in accounts_without_subaccount:
+            unwanted_subaccounts = [n for n in all_acc_dict if i in n and n != i]
+            del_acc.update(unwanted_subaccounts)
+        
+        # Удаление счетов из accounts_without_subaccount из del_acc
+        del_acc.difference_update(accounts_without_subaccount)
+        
+        df_for_check = df_for_check[~df_for_check['Кор.счет_ЧЕК'].isin(del_acc)].copy()
+        
         
         # Переименование столбцов для единообразия с УПП
         df_for_check = df_for_check.rename(columns={
@@ -1127,12 +1142,13 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
 
         # Векторизованное создание колонки
         df_for_check_2 = df[['Корр_счет', 'С кред. счетов', 'В дебет счетов']].copy()
-        corr_schet = df_for_check_2['Корр_счет'].astype(str)
-        df_for_check_2['Кор.счет_ЧЕК'] = np.where(
-            (corr_schet.str.len() >= 2) & (corr_schet != '000'),
-            corr_schet.str[:2],
-            corr_schet
-        )
+        # corr_schet = df_for_check_2['Корр_счет'].astype(str)
+        # df_for_check_2['Кор.счет_ЧЕК'] = np.where(
+        #     (corr_schet.str.len() >= 2) & (corr_schet != '000'),
+        #     corr_schet.str[:2],
+        #     corr_schet
+        # )
+        df_for_check_2['Кор.счет_ЧЕК'] = df_for_check_2.loc[:,'Корр_счет']
         
         # Группировка
         df_for_check_2 = df_for_check_2.groupby('Кор.счет_ЧЕК', as_index=False).agg({
@@ -1142,26 +1158,31 @@ class Analisys_NonUPPFileProcessor(FileProcessor):
     
         # Объединяем DataFrame
         merged_df = df_for_check.merge(
-            df_for_check_2, 
-            on='Кор.счет_ЧЕК', 
-            how='outer',
-            suffixes=('_df_for_check', '_df_for_check_2')
-        )
+                df_for_check_2, 
+                on='Кор.счет_ЧЕК', 
+                how='outer',
+                suffixes=('_base', '_current')
+            ).fillna(0)
+        # merged_df = df_for_check.merge(
+        #     df_for_check_2, 
+        #     on='Кор.счет_ЧЕК', 
+        #     how='outer',
+        #     suffixes=('_df_for_check', '_df_for_check_2')
+        # )
         
         # Заполняем пропуски нулями
-        merged_df = merged_df.fillna(0)
+        # merged_df = merged_df.fillna(0)
         
-        # Приводим столбцы к числовому типу
-        merged_df['С кред. счетов_df_for_check'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check'], errors='coerce').fillna(0)
-        merged_df['В дебет счетов_df_for_check'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check'], errors='coerce').fillna(0)
-        merged_df['С кред. счетов_df_for_check_2'] = pd.to_numeric(merged_df['С кред. счетов_df_for_check_2'], errors='coerce').fillna(0)
-        merged_df['В дебет счетов_df_for_check_2'] = pd.to_numeric(merged_df['В дебет счетов_df_for_check_2'], errors='coerce').fillna(0)
+        # Приводим столбцы к числовому типу более эффективно
+        numeric_cols = ['С кред. счетов_base', 'В дебет счетов_base', 
+                       'С кред. счетов_current', 'В дебет счетов_current']
+        merged_df[numeric_cols] = merged_df[numeric_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
         
         # Вычисляем разницы
-        merged_df['Разница_С_кред'] = (merged_df['С кред. счетов_df_for_check'] - 
-                                        merged_df['С кред. счетов_df_for_check_2']).round()
-        merged_df['Разница_В_дебет'] = (merged_df['В дебет счетов_df_for_check'] - 
-                                         merged_df['В дебет счетов_df_for_check_2']).round()
+        merged_df['Разница_С_кред'] = (merged_df['С кред. счетов_base'] - 
+                                        merged_df['С кред. счетов_current']).round()
+        merged_df['Разница_В_дебет'] = (merged_df['В дебет счетов_base'] - 
+                                         merged_df['В дебет счетов_current']).round()
         
         # Добавляем информацию о файле
         merged_df['Исх.файл'] = self.file
