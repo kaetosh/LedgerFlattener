@@ -345,6 +345,12 @@ class AccountOSV_UPPFileProcessor(FileProcessor):
         if 'Курсив' in df.columns:
             df = df.drop(columns=['Курсив'])
         
+        '''
+        Выровняем столбцы так, чтобы счета оказались в одном столбце без аналитики и субконто,
+        затем обновим значения столбца Субсчет (сейчас в нем счета), включив в него именно субсчета.
+        '''
+        
+        df = self.shiftable_level(df)
         
         """
         Добавляет к таблице с оборотами до обработки, созданной выше,
@@ -706,6 +712,13 @@ class AccountOSV_NonUPPFileProcessor(FileProcessor):
             df = df.drop(columns=['Показа-\nтели'])
         if 'Курсив' in df.columns:
             df = df.drop(columns=['Курсив'])
+            
+        '''
+        Выровняем столбцы так, чтобы счета оказались в одном столбце без аналитики и субконто,
+        затем обновим значения столбца Субсчет (сейчас в нем счета), включив в него именно субсчета.
+        '''
+        
+        df = self.shiftable_level(df)
         
         
         """
@@ -730,6 +743,9 @@ class AccountOSV_NonUPPFileProcessor(FileProcessor):
 
         # Помечаем данные именем файла
         pivot_df_check['Исх.файл'] = file_path.name
+        
+        
+        
 
         # Запись таблицы в хранилище таблиц
         self.table_for_check = pivot_df_check

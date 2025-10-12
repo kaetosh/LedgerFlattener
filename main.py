@@ -80,8 +80,8 @@ def main():
                 try:
                     file_handler.handle_input(input_path, choice)
                 except Exception as error_description:
-                    import traceback
-                    traceback.print_exc()
+                    # import traceback
+                    # traceback.print_exc()
                     print(f"{error_description}  ")
                     if input_path.is_file():
                         # file_handler.not_correct_files.append(input_path.name)
@@ -94,8 +94,8 @@ def main():
             # break
             continue
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            # import traceback
+            # traceback.print_exc()
             print(f"{e}")
         finally:
             # Вывод информации о неправильных файлах

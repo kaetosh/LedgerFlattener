@@ -7,7 +7,7 @@
 
 
 '''
-Старый неоптимальный, но рабочих код
+Старый неоптимальный, но рабочий код
 '''
 
 # import sys, os, subprocess, tempfile
@@ -555,12 +555,19 @@
 #     def __init__(self):
 #         self.upp_results = []
 #         self.non_upp_results = []
+        
 #         self.analisys_results = []
+#         self.analisys_processor = None
 #         self.analisys_checks = []
+        
 #         self.turnover_results = []
+#         self.turnover_processor = None
 #         self.turnover_checks = []
+        
 #         self.accountosv_results = []
+#         self.accountosv_processor = None
 #         self.accountosv_checks = []
+        
 #         self.generalosv_results = []
 #         self.generalosv_checks = []
     
@@ -573,12 +580,15 @@
 #         elif processor_type in (Analisys_UPPFileProcessor, Analisys_NonUPPFileProcessor):
 #             self.analisys_results.append(result)
 #             self.analisys_checks.append(check)
+#             self.analisys_processor = processor
 #         elif processor_type in (Turnover_UPPFileProcessor, Turnover_NonUPPFileProcessor):
 #             self.turnover_results.append(result)
 #             self.turnover_checks.append(check)
+#             self.turnover_processor = processor
 #         elif processor_type in (AccountOSV_UPPFileProcessor, AccountOSV_NonUPPFileProcessor):
 #             self.accountosv_results.append(result)
 #             self.accountosv_checks.append(check)
+#             self.accountosv_processor = processor
 #         elif processor_type in (GeneralOSV_UPPFileProcessor, GeneralOSV_NonUPPFileProcessor):
 #             self.generalosv_results.append(result)
 #             self.generalosv_checks.append(check)
@@ -589,13 +599,18 @@
 #         """Получить все результаты в структурированном виде"""
 #         return {
 #             'upp': (self._concat_and_sort(self.upp_results, 'upp'), pd.DataFrame()),
+            
 #             'non_upp': (self._concat_and_sort(self.non_upp_results, 'not_upp'), pd.DataFrame()),
-#             'analisys': (self._process_analisys_like(self.analisys_results), 
+            
+#             'analisys': (self._process_analisys_like(self.analisys_results, self.analisys_processor), 
 #                         pd.concat(self.analisys_checks) if self.analisys_checks else pd.DataFrame()),
-#             'turnover': (self._process_analisys_like(self.turnover_results),
+            
+#             'turnover': (self._process_analisys_like(self.turnover_results, self.turnover_processor),
 #                         pd.concat(self.turnover_checks) if self.turnover_checks else pd.DataFrame()),
-#             'accountosv': (self._process_analisys_like(self.accountosv_results),
+            
+#             'accountosv': (self._process_analisys_like(self.accountosv_results, self.accountosv_processor),
 #                           pd.concat(self.accountosv_checks) if self.accountosv_checks else pd.DataFrame()),
+            
 #             'generalosv': (self._process_analisys_like(self.generalosv_results),
 #                           pd.concat(self.generalosv_checks) if self.generalosv_checks else pd.DataFrame())
 #         }
@@ -606,13 +621,13 @@
 #             return pd.DataFrame()
 #         return sort_columns(pd.concat(results), DESIRED_ORDER[self.type_register][processor_type])
     
-#     def _process_analisys_like(self, results: List[pd.DataFrame]) -> pd.DataFrame:
+#     def _process_analisys_like(self, results: List[pd.DataFrame], processor = None) -> pd.DataFrame:
 #         """Обработать результаты анализов и подобных регистров"""
 #         if not results:
 #             return pd.DataFrame()
 #         df = sort_columns(pd.concat(results), DESIRED_ORDER[self.type_register]['upp'])
 #         # Предполагаем, что у всех процессоров есть метод shiftable_level
-#         return results[0].shiftable_level(df) if hasattr(results[0], 'shiftable_level') else df
+#         return processor.shiftable_level(df) if hasattr(processor, 'shiftable_level') else df
 
 
 # class FileHandler:
@@ -933,12 +948,19 @@ class ResultCollector:
     def __init__(self):
         self.upp_results = []
         self.non_upp_results = []
+        
         self.analisys_results = []
+        self.analisys_processor = None
         self.analisys_checks = []
+        
         self.turnover_results = []
+        self.turnover_processor = None
         self.turnover_checks = []
+        
         self.accountosv_results = []
+        self.accountosv_processor = None
         self.accountosv_checks = []
+        
         self.generalosv_results = []
         self.generalosv_checks = []
     
@@ -951,12 +973,15 @@ class ResultCollector:
         elif processor_type in (Analisys_UPPFileProcessor, Analisys_NonUPPFileProcessor):
             self.analisys_results.append(result)
             self.analisys_checks.append(check)
+            self.analisys_processor = processor
         elif processor_type in (Turnover_UPPFileProcessor, Turnover_NonUPPFileProcessor):
             self.turnover_results.append(result)
             self.turnover_checks.append(check)
+            self.turnover_processor = processor
         elif processor_type in (AccountOSV_UPPFileProcessor, AccountOSV_NonUPPFileProcessor):
             self.accountosv_results.append(result)
             self.accountosv_checks.append(check)
+            self.accountosv_processor = processor
         elif processor_type in (GeneralOSV_UPPFileProcessor, GeneralOSV_NonUPPFileProcessor):
             self.generalosv_results.append(result)
             self.generalosv_checks.append(check)
@@ -967,13 +992,18 @@ class ResultCollector:
         """Получить все результаты в структурированном виде"""
         return {
             'upp': (self._concat_and_sort(self.upp_results, 'upp'), pd.DataFrame()),
+            
             'non_upp': (self._concat_and_sort(self.non_upp_results, 'not_upp'), pd.DataFrame()),
-            'analisys': (self._process_analisys_like(self.analisys_results), 
+            
+            'analisys': (self._process_analisys_like(self.analisys_results, self.analisys_processor), 
                         pd.concat(self.analisys_checks) if self.analisys_checks else pd.DataFrame()),
-            'turnover': (self._process_analisys_like(self.turnover_results),
+            
+            'turnover': (self._process_analisys_like(self.turnover_results, self.turnover_processor),
                         pd.concat(self.turnover_checks) if self.turnover_checks else pd.DataFrame()),
-            'accountosv': (self._process_analisys_like(self.accountosv_results),
+            
+            'accountosv': (self._process_analisys_like(self.accountosv_results, self.accountosv_processor),
                           pd.concat(self.accountosv_checks) if self.accountosv_checks else pd.DataFrame()),
+            
             'generalosv': (self._process_analisys_like(self.generalosv_results),
                           pd.concat(self.generalosv_checks) if self.generalosv_checks else pd.DataFrame())
         }
@@ -984,13 +1014,13 @@ class ResultCollector:
             return pd.DataFrame()
         return sort_columns(pd.concat(results), DESIRED_ORDER[self.type_register][processor_type])
     
-    def _process_analisys_like(self, results: List[pd.DataFrame]) -> pd.DataFrame:
+    def _process_analisys_like(self, results: List[pd.DataFrame], processor = None) -> pd.DataFrame:
         """Обработать результаты анализов и подобных регистров"""
         if not results:
             return pd.DataFrame()
         df = sort_columns(pd.concat(results), DESIRED_ORDER[self.type_register]['upp'])
         # Предполагаем, что у всех процессоров есть метод shiftable_level
-        return results[0].shiftable_level(df) if hasattr(results[0], 'shiftable_level') else df
+        return processor.shiftable_level(df) if hasattr(processor, 'shiftable_level') else df
 
 
 class FileHandler:
