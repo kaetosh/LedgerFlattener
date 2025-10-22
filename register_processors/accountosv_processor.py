@@ -61,6 +61,8 @@ class AccountOSV_UPPFileProcessor(FileProcessor):
         df.dropna(axis=1, how='all', inplace=True)
         df.dropna(axis=0, how='all', inplace=True)
         
+        
+        
         # Ищем столбец, содержащий "Субконто" в первых 30 строках (или меньше, если строк меньше)
         subkonto_col_idx = None
         max_rows_to_check = min(MAX_HEADER_ROWS, df.shape[0])  # Проверяем не больше 30 строк
@@ -95,19 +97,36 @@ class AccountOSV_UPPFileProcessor(FileProcessor):
         target_idx_a = cols.index('Сальдо на начало периода')
         target_idx_b = cols.index('Оборот за период')
         target_idx_c = cols.index('Сальдо на конец периода')
+        
+        
        
         # Новый список имен столбцов — копируем текущие
         new_cols = cols.copy()
         
+        
+        def find_column_index(cols, df, ind_col, word):
+            
+            # Проходим по столбцам после заданного индекса
+            for idx in range(ind_col + 1, len(cols)):
+                # Проверяем первую строку (iloc[0]) в текущем столбце
+                if df.iloc[0, idx] == word:
+                    return idx
+            
+            # Если подходящий столбец не найден
+            return None
+        
         # Переименовываем целевой столбец по индексу
         new_cols[target_idx_a] = 'Дебет_начало'
-        new_cols[target_idx_a + 1] = 'Кредит_начало'
+        # new_cols[target_idx_a + 1] = 'Кредит_начало'
+        new_cols[find_column_index(cols, df, target_idx_a, 'Кредит')] = 'Кредит_начало'
         
         new_cols[target_idx_b] = 'Дебет_оборот'
-        new_cols[target_idx_b + 1] = 'Кредит_оборот'
+        # new_cols[target_idx_b + 2] = 'Кредит_оборот'
+        new_cols[find_column_index(cols, df, target_idx_b, 'Кредит')] = 'Кредит_оборот'
         
         new_cols[target_idx_c] = 'Дебет_конец'
-        new_cols[target_idx_c + 1] = 'Кредит_конец'
+        # new_cols[target_idx_c + 1] = 'Кредит_конец'
+        new_cols[find_column_index(cols, df, target_idx_c, 'Кредит')] = 'Кредит_конец'
         
         # Присваиваем новый список имен столбцов DataFrame
         df.columns = new_cols
@@ -159,6 +178,8 @@ class AccountOSV_UPPFileProcessor(FileProcessor):
         
         # Установка заголовков таблицы и чистка данных
         df = self._process_dataframe_optimized(df)
+        
+        
         
         # Столбец с именем файла
         df['Исх.файл'] = self.file
