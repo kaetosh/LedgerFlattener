@@ -648,15 +648,19 @@ class AccountOSV_NonUPPFileProcessor(FileProcessor):
         if do_ko_columns:
             desired_order += do_ko_columns
             
-        if df['Счет'].isin(['Количество']).any() or 'Показа-\nтели' in df.columns:
+        if 'Показа-\nтели' in df.columns and df['Показа-\nтели'].str.startswith('Кол.').any():
             for i in desired_order:
                 df[f'Количество_{i}'] = df[i].shift(-1)
         
-        if df['Счет'].isin(['Валютная сумма']).any() or 'Показа-\nтели' in df.columns:
-            if df['Счет'].str.startswith('Валюта').any():
-                df['Валюта'] = df['Счет'].shift(-1)
+        if 'Показа-\nтели' in df.columns and df['Показа-\nтели'].str.startswith('Вал.').any():
             for i in desired_order:
-                df[f'ВалютнаяСумма_{i}'] = df[i].shift(-2)
+                df[f'ВалютнаяСумма_{i}'] = df[i].shift(-1)
+        
+        # if df['Счет'].isin(['Валютная сумма']).any() or 'Показа-\nтели' in df.columns:
+        #     if df['Счет'].str.startswith('Валюта').any():
+        #         df['Валюта'] = df['Счет'].shift(-1)
+        #     for i in desired_order:
+        #         df[f'ВалютнаяСумма_{i}'] = df[i].shift(-2)
         
         
         
