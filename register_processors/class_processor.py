@@ -18,13 +18,7 @@ import pandas as pd
 import tempfile
 import os
 
-
-
-
-
-
-
-
+import time
 
 
 
@@ -303,6 +297,14 @@ class FileProcessor(ABC):
                     os.unlink(tmp_path)
                 except Exception:
                     pass
+            # Очистка xlwings для предотвращения "зависших" процессов Excel
+            try:
+                wb_xl.close()  # Повторно, на случай исключений выше
+                app.quit()
+            except:
+                pass
+            xw.apps.cleanup()
+            time.sleep(0.5)  # Паузы для стабилизации
     
             # Заменяем строку в данных на отформатированную из xlwings
             data[header_row_idx] = formatted_header_row
