@@ -266,7 +266,19 @@ class Card_NonUPPFileProcessor(FileProcessor):
             if 'Кредит' in filtered.columns:
                 kt_index = filtered.columns.get_loc('Кредит')
                 if value_filter == 'Кол.':
-                    result['Кредит_количество'] = pd.to_numeric(filtered.iloc[:, kt_index + 1], errors='coerce').fillna(0)
+                    
+                    
+                    # Пробуем первый столбец
+                    credit_qty = pd.to_numeric(filtered.iloc[:, kt_index + 1], errors='coerce').fillna(0)
+                    
+                    # Проверяем сумму ВСЕГО столбца
+                    if credit_qty.sum() == 0:
+                        # Если сумма всех значений в столбце равна 0, берем другой столбец
+                        credit_qty = pd.to_numeric(filtered.iloc[:, kt_index + 2], errors='coerce').fillna(0)
+                    
+                    result['Кредит_количество'] = credit_qty
+                    
+                    
                 elif value_filter == 'Вал.':
                     result['Кредит_валюта'] = filtered.iloc[:, kt_index + 1]
                     result['Кредит_валютное_количество'] = pd.to_numeric(filtered.iloc[:, kt_index + 2], errors='coerce').fillna(0)
