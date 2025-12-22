@@ -247,7 +247,15 @@ class Card_NonUPPFileProcessor(FileProcessor):
             if 'Дебет' in filtered.columns:
                 dt_index = filtered.columns.get_loc('Дебет')
                 if value_filter == 'Кол.':
-                    result['Дебет_количество'] = pd.to_numeric(filtered.iloc[:, dt_index + 1], errors='coerce').fillna(0)
+                    # Пробуем первый столбец
+                    debit_qty = pd.to_numeric(filtered.iloc[:, dt_index + 1], errors='coerce').fillna(0)
+                    
+                    # Проверяем сумму ВСЕГО столбца
+                    if debit_qty.sum() == 0:
+                        # Если сумма всех значений в столбце равна 0, берем другой столбец
+                        debit_qty = pd.to_numeric(filtered.iloc[:, dt_index + 2], errors='coerce').fillna(0)
+                    
+                    result['Дебет_количество'] = debit_qty
                 elif value_filter == 'Вал.':
                     result['Дебет_валюта'] = filtered.iloc[:, dt_index + 1]
                     result['Дебет_валютное_количество'] = pd.to_numeric(filtered.iloc[:, dt_index + 2], errors='coerce').fillna(0)
