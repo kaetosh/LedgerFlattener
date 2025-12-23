@@ -303,7 +303,7 @@ class FileProcessor(ABC):
                 app.quit()
             except:
                 pass
-            xw.apps.cleanup()
+            # xw.apps.cleanup()
             time.sleep(0.5)  # Паузы для стабилизации
     
             # Заменяем строку в данных на отформатированную из xlwings
@@ -451,4 +451,5 @@ class FileProcessor(ABC):
 
     @abstractmethod
     def process_file(self, file_path: Path) -> pd.DataFrame:
+
         pass
